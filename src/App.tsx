@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import LandingPage from './pages/LandingPage'
 import DashboardPage from './pages/DashboardPage'
+import AuthCallbackPage from './pages/AuthCallbackPage'
 
 const ERROR_CODE_MESSAGES: Record<string, string> = {
   access_denied: "You cancelled the sign-in request on GitHub.",
@@ -165,6 +166,7 @@ function App() {
           path="/dashboard"
           element={isAuthenticated ? <DashboardPage /> : <Navigate to="/" replace />}
         />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
       </Routes>
     </BrowserRouter>
   )

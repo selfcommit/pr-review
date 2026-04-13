@@ -1,9 +1,41 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { isInIframe } from '../utils/iframe'
 import './LandingPage.css'
 
 function LandingPage() {
+  const navigate = useNavigate()
   const [isLoading, setIsLoading] = useState(false)
   const [signInError, setSignInError] = useState<string | null>(null)
+
+  const handleOAuthMessage = useCallback((event: MessageEvent) => {
+    if (event.origin !== window.location.origin) return
+    if (event.data?.type !== 'github-oauth-callback') return
+
+    const { access_token, user, state, auth_error } = event.data
+    const savedState = sessionStorage.getItem('github_oauth_state')
+
+    if (auth_error) {
+      setSignInError(auth_error)
+      setIsLoading(false)
+      return
+    }
+
+    if (access_token && state && state === savedState && user) {
+      localStorage.setItem('github_access_token', access_token)
+      localStorage.setItem('github_user', user)
+      sessionStorage.removeItem('github_oauth_state')
+      navigate('/dashboard')
+    } else {
+      setSignInError('Sign-in could not be verified. Please try again.')
+      setIsLoading(false)
+    }
+  }, [navigate])
+
+  useEffect(() => {
+    window.addEventListener('message', handleOAuthMessage)
+    return () => window.removeEventListener('message', handleOAuthMessage)
+  }, [handleOAuthMessage])
 
   const handleSignIn = async () => {
     setIsLoading(true)
@@ -11,32 +43,31 @@ function LandingPage() {
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const origin = window.location.origin
-      console.log('[handleSignIn] window.location.origin:', origin)
-
-      const redirectTo = encodeURIComponent(origin)
+      const callbackPath = isInIframe() ? '/auth/callback' : ''
+      const redirectTo = encodeURIComponent(origin + callbackPath)
       const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
-      console.log('[handleSignIn] fetching login URL:', loginUrl)
 
       const response = await fetch(loginUrl)
       const data = await response.json()
-      console.log('[handleSignIn] login response status:', response.status)
-      console.log('[handleSignIn] login response data.url:', data.url)
-      console.log('[handleSignIn] login response data.state:', data.state)
-      console.log('[handleSignIn] login response error:', data.error || '(none)')
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
-        console.log('[handleSignIn] stored state in sessionStorage:', data.state)
-        console.log('[handleSignIn] navigating to GitHub auth URL...')
-        window.location.href = data.url
+
+        if (isInIframe()) {
+          const popup = window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
+          if (!popup) {
+            setSignInError('Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.')
+            setIsLoading(false)
+          }
+        } else {
+          window.location.href = data.url
+        }
       } else {
         const message = data.message || data.error || 'Failed to initiate sign-in. Please try again.'
-        console.error('[handleSignIn] no URL in response:', message)
         setSignInError(message)
         setIsLoading(false)
       }
     } catch (error) {
-      console.error('[handleSignIn] sign in error:', error)
       setSignInError(
         error instanceof Error && error.message
           ? `Could not reach the authentication service: ${error.message}. Check your connection and try again.`
