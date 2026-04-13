@@ -30,11 +30,12 @@ export function useOrgAccess() {
     loading: false,
   })
 
-  const fetchOrgs = useCallback(async () => {
+  const fetchOrgs = useCallback(async (refresh = false) => {
     setResult(prev => ({ ...prev, loading: true }))
 
     try {
-      const data = await apiGet<OrgApiResponse>('orgs')
+      const path = refresh ? 'orgs?refresh=true' : 'orgs'
+      const data = await apiGet<OrgApiResponse>(path)
 
       const memberOrgs: OrgAccessInfo[] = data.orgs.map(org => ({
         login: org.org_login,

@@ -36,68 +36,90 @@ function getSupabaseAdmin() {
   );
 }
 
-async function fetchUserOrgs(accessToken: string) {
+interface OrgInfo {
+  login: string;
+  id: number | null;
+  avatar_url: string;
+  role: string;
+  accessible: boolean;
+}
+
+async function fetchUserInstallations(accessToken: string): Promise<OrgInfo[]> {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/vnd.github.v3+json",
   };
 
-  const [orgsResp, membershipsResp] = await Promise.all([
-    fetch("https://api.github.com/user/orgs?per_page=100", { headers }),
-    fetch(
-      "https://api.github.com/user/memberships/orgs?state=active&per_page=100",
-      { headers }
-    ),
-  ]);
+  const installationsResp = await fetch(
+    "https://api.github.com/user/installations?per_page=100",
+    { headers }
+  );
 
-  const orgMap = new Map<
-    string,
-    {
-      login: string;
-      id: number | null;
-      avatar_url: string;
-      role: string;
-      accessible: boolean;
-    }
-  >();
+  if (!installationsResp.ok) {
+    console.error(
+      "[fetchUserInstallations] Failed:",
+      installationsResp.status,
+      await installationsResp.text()
+    );
+    return [];
+  }
 
-  if (membershipsResp.ok) {
-    const memberships = await membershipsResp.json();
-    for (const m of memberships) {
-      orgMap.set(m.organization.login.toLowerCase(), {
-        login: m.organization.login,
-        id: m.organization.id ?? null,
-        avatar_url: m.organization.avatar_url,
-        role: m.role === "admin" ? "admin" : "member",
-        accessible: false,
+  const installationsData = await installationsResp.json();
+  const installations = installationsData.installations || [];
+
+  const supabase = getSupabaseAdmin();
+  const { data: allInstallations } = await supabase
+    .from("installations")
+    .select("id, organization_name, organization_id, organization_avatar_url");
+
+  const installedOrgIds = new Set(
+    (allInstallations || []).map((i: { organization_id: number }) =>
+      i.organization_id
+    )
+  );
+
+  const orgMap = new Map<string, OrgInfo>();
+
+  for (const inst of installations) {
+    const account = inst.account;
+    if (!account) continue;
+
+    if (account.type === "Organization") {
+      const key = account.login.toLowerCase();
+      const isInstalled = installedOrgIds.has(account.id);
+      orgMap.set(key, {
+        login: account.login,
+        id: account.id ?? null,
+        avatar_url: account.avatar_url,
+        role: inst.permissions?.administration === "write" ? "admin" : "member",
+        accessible: isInstalled,
       });
     }
   }
 
+  const orgsResp = await fetch(
+    "https://api.github.com/user/orgs?per_page=100",
+    { headers }
+  );
+
   if (orgsResp.ok) {
-    const orgs = await orgsResp.json();
-    for (const org of orgs) {
+    const userOrgs = await orgsResp.json();
+    for (const org of userOrgs) {
       const key = org.login.toLowerCase();
-      if (orgMap.has(key)) {
-        orgMap.get(key)!.accessible = true;
-      } else {
+      if (!orgMap.has(key)) {
+        const isInstalled = installedOrgIds.has(org.id);
         orgMap.set(key, {
           login: org.login,
           id: org.id ?? null,
           avatar_url: org.avatar_url,
           role: "member",
-          accessible: true,
+          accessible: isInstalled,
         });
       }
     }
   }
 
-  const oauthScopes =
-    orgsResp.headers.get("X-OAuth-Scopes") ||
-    membershipsResp.headers.get("X-OAuth-Scopes") ||
-    null;
-
-  return { orgs: Array.from(orgMap.values()), oauthScopes };
+  return Array.from(orgMap.values());
 }
 
 async function syncUserAndOrgs(
@@ -107,14 +129,7 @@ async function syncUserAndOrgs(
   avatarUrl: string | null,
   email: string | null,
   accessToken: string,
-  oauthScopes: string | null,
-  orgs: Array<{
-    login: string;
-    id: number | null;
-    avatar_url: string;
-    role: string;
-    accessible: boolean;
-  }>
+  orgs: OrgInfo[]
 ) {
   const supabase = getSupabaseAdmin();
 
@@ -134,7 +149,6 @@ async function syncUserAndOrgs(
       avatar_url: avatarUrl,
       email,
       access_token: accessToken,
-      oauth_scopes: oauthScopes,
       session_token: sessionToken,
       updated_at: new Date().toISOString(),
     },
@@ -164,7 +178,8 @@ async function syncUserAndOrgs(
 
   if (existing) {
     const toRemove = existing.filter(
-      (e) => !orgLogins.includes(e.org_login.toLowerCase())
+      (e: { org_login: string }) =>
+        !orgLogins.includes(e.org_login.toLowerCase())
     );
     for (const r of toRemove) {
       await supabase.from("user_orgs").delete().eq("id", r.id);
@@ -172,6 +187,68 @@ async function syncUserAndOrgs(
   }
 
   return sessionToken;
+}
+
+async function getAppSlug(): Promise<string | null> {
+  const appId = Deno.env.get("GITHUB_APP_ID");
+  const privateKey = Deno.env.get("GITHUB_APP_PRIVATE_KEY");
+
+  if (!appId || !privateKey) return null;
+
+  try {
+    const pemContents = privateKey
+      .replace(/-----BEGIN RSA PRIVATE KEY-----/, "")
+      .replace(/-----END RSA PRIVATE KEY-----/, "")
+      .replace(/\s/g, "");
+    const binaryDer = Uint8Array.from(atob(pemContents), (c) =>
+      c.charCodeAt(0)
+    );
+
+    const key = await crypto.subtle.importKey(
+      "pkcs8",
+      binaryDer,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+
+    const now = Math.floor(Date.now() / 1000);
+    const header = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" }))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    const payload = btoa(
+      JSON.stringify({ iat: now - 60, exp: now + 300, iss: appId })
+    )
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    const data = new TextEncoder().encode(`${header}.${payload}`);
+    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, data);
+    const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    const jwt = `${header}.${payload}.${sig}`;
+
+    const resp = await fetch("https://api.github.com/app", {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+
+    if (resp.ok) {
+      const appData = await resp.json();
+      return appData.slug || null;
+    }
+  } catch (err) {
+    console.error("[getAppSlug] Error:", err);
+  }
+
+  return null;
 }
 
 Deno.serve(async (req: Request) => {
@@ -205,9 +282,8 @@ Deno.serve(async (req: Request) => {
 
       const nonce = crypto.randomUUID();
       const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
-      const scope = "read:user read:org repo";
 
-      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(statePayload)}`;
+      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}`;
 
       return jsonResponse({
         url: githubAuthUrl,
@@ -330,9 +406,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const { orgs, oauthScopes } = await fetchUserOrgs(
-        tokenData.access_token
-      );
+      const orgs = await fetchUserInstallations(tokenData.access_token);
 
       const sessionToken = await syncUserAndOrgs(
         userData.id,
@@ -341,7 +415,6 @@ Deno.serve(async (req: Request) => {
         userData.avatar_url,
         userData.email,
         tokenData.access_token,
-        oauthScopes,
         orgs
       );
 
@@ -361,77 +434,6 @@ Deno.serve(async (req: Request) => {
       return redirectResponse(`${appUrl}/#${params.toString()}`);
     }
 
-    if (path === "revoke-grant") {
-      if (req.method !== "POST") {
-        return jsonResponse({ error: "Method not allowed" }, 405);
-      }
-
-      const authHeader = req.headers.get("Authorization");
-      if (!authHeader?.startsWith("Bearer ")) {
-        return jsonResponse({ error: "Missing session token" }, 401);
-      }
-
-      const sessionToken = authHeader.replace("Bearer ", "");
-      const supabase = getSupabaseAdmin();
-
-      const { data: user } = await supabase
-        .from("app_users")
-        .select("github_user_id, access_token")
-        .eq("session_token", sessionToken)
-        .maybeSingle();
-
-      if (!user) {
-        return jsonResponse({ error: "Invalid session" }, 401);
-      }
-
-      const clientId = Deno.env.get("GITHUB_CLIENT_ID");
-      const clientSecret = Deno.env.get("GITHUB_CLIENT_SECRET");
-
-      if (!clientId || !clientSecret) {
-        return jsonResponse({ error: "OAuth not configured" }, 500);
-      }
-
-      const revokeResponse = await fetch(
-        `https://api.github.com/applications/${clientId}/grant`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization:
-              "Basic " + btoa(`${clientId}:${clientSecret}`),
-            Accept: "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ access_token: user.access_token }),
-        }
-      );
-
-      if (revokeResponse.status === 204 || revokeResponse.status === 200) {
-        await supabase
-          .from("user_orgs")
-          .delete()
-          .eq("github_user_id", user.github_user_id);
-
-        await supabase
-          .from("app_users")
-          .delete()
-          .eq("github_user_id", user.github_user_id);
-
-        return jsonResponse({ success: true });
-      }
-
-      const body = await revokeResponse.text();
-      console.error(
-        "[revoke-grant] GitHub API error:",
-        revokeResponse.status,
-        body
-      );
-
-      return jsonResponse({
-        success: true,
-        note: "Grant may already have been revoked",
-      });
-    }
-
     if (path === "session") {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
@@ -443,9 +445,7 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
-        .select(
-          "github_user_id, login, name, avatar_url, email, oauth_scopes"
-        )
+        .select("github_user_id, login, name, avatar_url, email")
         .eq("session_token", sessionToken)
         .maybeSingle();
 
@@ -467,7 +467,7 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
-        .select("github_user_id")
+        .select("github_user_id, access_token")
         .eq("session_token", sessionToken)
         .maybeSingle();
 
@@ -475,13 +475,62 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ error: "Invalid session" }, 401);
       }
 
+      const refresh = url.searchParams.get("refresh") === "true";
+      if (refresh) {
+        const orgs = await fetchUserInstallations(user.access_token);
+        for (const org of orgs) {
+          await supabase.from("user_orgs").upsert(
+            {
+              github_user_id: user.github_user_id,
+              org_login: org.login,
+              org_id: org.id,
+              org_avatar_url: org.avatar_url,
+              role: org.role,
+              accessible: org.accessible,
+              last_synced_at: new Date().toISOString(),
+            },
+            { onConflict: "github_user_id,org_login" }
+          );
+        }
+        const orgLogins = orgs.map((o) => o.login.toLowerCase());
+        const { data: existing } = await supabase
+          .from("user_orgs")
+          .select("id, org_login")
+          .eq("github_user_id", user.github_user_id);
+        if (existing) {
+          const toRemove = existing.filter(
+            (e: { org_login: string }) =>
+              !orgLogins.includes(e.org_login.toLowerCase())
+          );
+          for (const r of toRemove) {
+            await supabase.from("user_orgs").delete().eq("id", r.id);
+          }
+        }
+      }
+
       const { data: orgs } = await supabase
         .from("user_orgs")
-        .select("org_login, org_id, org_avatar_url, role, accessible, last_synced_at")
+        .select(
+          "org_login, org_id, org_avatar_url, role, accessible, last_synced_at"
+        )
         .eq("github_user_id", user.github_user_id)
         .order("org_login");
 
       return jsonResponse({ orgs: orgs || [] });
+    }
+
+    if (path === "app-info") {
+      const slug = await getAppSlug();
+      if (slug) {
+        return jsonResponse({
+          install_url: `https://github.com/apps/${slug}/installations/select_target`,
+          slug,
+        });
+      }
+      return jsonResponse(
+        { error: "Could not determine app slug" },
+        500
+      );
     }
 
     if (path === "pull-requests") {
@@ -576,6 +625,6 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Invalid path" }, 404);
   } catch (error) {
     console.error("Auth error:", error);
-    return jsonResponse({ error: error.message }, 500);
+    return jsonResponse({ error: (error as Error).message }, 500);
   }
 });

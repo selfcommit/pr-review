@@ -93,7 +93,12 @@ export async function logout(): Promise<void> {
   clearSession();
 }
 
-export async function revokeGrant(): Promise<void> {
-  await apiPost('revoke-grant');
-  clearSession();
+export async function fetchAppInstallUrl(): Promise<string | null> {
+  try {
+    const resp = await fetch(`${AUTH_BASE}/app-info`);
+    const data = await resp.json();
+    return data.install_url || null;
+  } catch {
+    return null;
+  }
 }

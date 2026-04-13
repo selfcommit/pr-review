@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
-import { isInIframe } from '../utils/iframe'
-import { getCachedUser, setCachedUser, setSessionToken, logout, revokeGrant, apiGet, getSessionToken } from '../utils/api'
+import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken, fetchAppInstallUrl } from '../utils/api'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import './DashboardPage.css'
@@ -65,8 +64,8 @@ function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
-  const [managing, setManaging] = useState(false)
-  const [manageError, setManageError] = useState<string | null>(null)
+  const [refreshingOrgs, setRefreshingOrgs] = useState(false)
+  const [installUrl, setInstallUrl] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const { orgAccess, fetchOrgs } = useOrgAccess()
 
@@ -83,11 +82,8 @@ function DashboardPage() {
       setCachedUser(parsed)
       sessionStorage.removeItem('github_oauth_state')
       setUser(parsed)
-      setManaging(false)
       fetchPullRequests()
       fetchOrgs()
-    } else {
-      setManaging(false)
     }
   }, [fetchOrgs])
 
@@ -98,6 +94,7 @@ function DashboardPage() {
     }
     fetchPullRequests()
     fetchOrgs()
+    fetchAppInstallUrl().then(setInstallUrl)
   }, [fetchOrgs])
 
   useEffect(() => {
@@ -240,42 +237,10 @@ function DashboardPage() {
     navigate('/')
   }
 
-  const handleManageAccess = async () => {
-    setManaging(true)
-    setManageError(null)
-    try {
-      await revokeGrant()
-
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const origin = window.location.origin
-      const callbackPath = isInIframe() ? '/auth/callback' : ''
-      const redirectTo = encodeURIComponent(origin + callbackPath)
-      const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
-
-      const response = await fetch(loginUrl)
-      const data = await response.json()
-
-      if (data.url) {
-        sessionStorage.setItem('github_oauth_state', data.state)
-        if (isInIframe()) {
-          const popup = window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
-          if (!popup) {
-            setManageError('Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.')
-            setManaging(false)
-          }
-        } else {
-          window.location.href = data.url
-        }
-      } else {
-        setManageError(data.message || data.error || 'Failed to start authorization flow.')
-        setManaging(false)
-      }
-    } catch (err) {
-      setManageError(
-        err instanceof Error ? err.message : 'Could not reach the authentication service.'
-      )
-      setManaging(false)
-    }
+  const handleRefreshOrgs = async () => {
+    setRefreshingOrgs(true)
+    await fetchOrgs(true)
+    setRefreshingOrgs(false)
   }
 
   const formatDate = (dateString: string) => {
@@ -423,6 +388,7 @@ function DashboardPage() {
               {!loading && !error && (
                 <OrgAccessBanner
                   orgAccess={orgAccess}
+                  installUrl={installUrl}
                   onSwitchToOrgsTab={() => setActiveTab('organizations')}
                 />
               )}
@@ -477,9 +443,9 @@ function DashboardPage() {
           {activeTab === 'organizations' && (
             <OrganizationsTab
               orgAccess={orgAccess}
-              onManageAccess={handleManageAccess}
-              managing={managing}
-              manageError={manageError}
+              installUrl={installUrl}
+              onRefreshOrgs={handleRefreshOrgs}
+              refreshing={refreshingOrgs}
             />
           )}
 
@@ -514,7 +480,7 @@ function DashboardPage() {
                         <div key={org.login} className="debug-row">
                           <span className="debug-label">{org.login}</span>
                           <span className={`debug-value ${org.accessible ? 'debug-status-ok' : 'debug-status-restricted'}`}>
-                            {org.accessible ? 'Accessible' : 'Restricted'}
+                            {org.accessible ? 'Installed' : 'Not Installed'}
                           </span>
                         </div>
                       ))}
