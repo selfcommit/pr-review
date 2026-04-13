@@ -8,7 +8,8 @@ function LandingPage() {
     setIsLoading(true)
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const response = await fetch(`${supabaseUrl}/functions/v1/github-auth/login`)
+      const redirectTo = encodeURIComponent(window.location.origin)
+      const response = await fetch(`${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`)
       const data = await response.json()
 
       if (data.url) {

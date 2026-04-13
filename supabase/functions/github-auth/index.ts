@@ -30,13 +30,15 @@ Deno.serve(async (req: Request) => {
         throw new Error("Could not determine redirect URI");
       }
 
-      const state = crypto.randomUUID();
+      const redirectTo = url.searchParams.get("redirect_to") || "https://pr-review.com";
+      const nonce = crypto.randomUUID();
+      const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
       const scope = "read:user,read:org";
 
-      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${state}`;
+      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(statePayload)}`;
 
       return new Response(
-        JSON.stringify({ url: githubAuthUrl, state }),
+        JSON.stringify({ url: githubAuthUrl, state: statePayload }),
         {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -48,7 +50,15 @@ Deno.serve(async (req: Request) => {
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
 
-      const appUrl = "https://pr-review.com";
+      let appUrl = "https://pr-review.com";
+      try {
+        if (state) {
+          const parsed = JSON.parse(atob(state));
+          if (parsed.redirectTo) appUrl = parsed.redirectTo;
+        }
+      } catch {
+        // fall back to default
+      }
 
       if (!code) {
         const errorUrl = `${appUrl}/#auth_error=${encodeURIComponent("No authorization code received")}`;
