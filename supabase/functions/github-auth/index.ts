@@ -23,7 +23,8 @@ Deno.serve(async (req: Request) => {
         throw new Error("GitHub OAuth not configured");
       }
 
-      const redirectUri = Deno.env.get("GITHUB_REDIRECT_URI") || "";
+      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+      const redirectUri = Deno.env.get("GITHUB_REDIRECT_URI") || `${supabaseUrl}/functions/v1/github-auth/callback`;
 
       if (!redirectUri) {
         throw new Error("Could not determine redirect URI");
