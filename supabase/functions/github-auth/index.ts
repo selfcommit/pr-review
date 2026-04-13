@@ -65,7 +65,7 @@ Deno.serve(async (req: Request) => {
       console.log("[login] statePayload (btoa):", statePayload);
       console.log("[login] statePayload decoded back:", JSON.parse(atob(statePayload)));
 
-      const scope = "read:user,read:org";
+      const scope = "read:user read:org repo";
 
       const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(statePayload)}`;
       console.log("[login] githubAuthUrl:", githubAuthUrl);
