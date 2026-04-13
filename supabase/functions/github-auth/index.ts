@@ -48,7 +48,7 @@ Deno.serve(async (req: Request) => {
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
 
-      const appUrl = (Deno.env.get("APP_URL") || "https://pr-review.com").trim().replace(/^`|`$/g, "");
+      const appUrl = "https://pr-review.com";
 
       if (!code) {
         const errorUrl = `${appUrl}/#auth_error=${encodeURIComponent("No authorization code received")}`;
