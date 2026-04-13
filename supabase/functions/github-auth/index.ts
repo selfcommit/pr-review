@@ -67,7 +67,7 @@ Deno.serve(async (req: Request) => {
 
       const scope = "read:user read:org repo";
 
-      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(statePayload)}&prompt=consent`;
+      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(statePayload)}`;
       console.log("[login] githubAuthUrl:", githubAuthUrl);
 
       return new Response(

@@ -777,6 +777,119 @@
   cursor: not-allowed;
 }
 
+.orgs-tab-help {
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 16px;
+  padding: 24px;
+}
+
+.orgs-tab-help-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #60a5fa;
+  margin-bottom: 10px;
+}
+
+.orgs-tab-help-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin: 0;
+}
+
+.orgs-tab-help-desc {
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 20px;
+}
+
+.orgs-tab-help-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.orgs-tab-help-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(71, 85, 105, 0.2);
+  border-radius: 10px;
+  transition: border-color 0.2s ease;
+}
+
+.orgs-tab-help-step:hover {
+  border-color: rgba(71, 85, 105, 0.4);
+}
+
+.orgs-tab-help-step-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.orgs-tab-help-step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.orgs-tab-help-step-text strong {
+  color: #e2e8f0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.orgs-tab-help-step-text span {
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.orgs-tab-help-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.orgs-tab-help-github-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #24292f 0%, #1b1f23 100%);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.orgs-tab-help-github-btn:hover {
+  background: linear-gradient(135deg, #2f363d 0%, #24292f 100%);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
 .debug-panel {
   margin-top: 48px;
   padding: 20px;
@@ -948,5 +1061,18 @@
   .orgs-tab-hint {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .orgs-tab-help-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .orgs-tab-help-github-btn {
+    justify-content: center;
+  }
+
+  .orgs-tab-reauth-btn {
+    text-align: center;
   }
 }
