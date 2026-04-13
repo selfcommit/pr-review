@@ -7,6 +7,9 @@ interface PullRequest {
   title: string
   html_url: string
   created_at: string
+  updated_at: string
+  state: string
+  pull_request_merged: boolean
   repository: {
     name: string
     full_name: string
@@ -30,12 +33,31 @@ interface GitHubUser {
   avatar_url: string
 }
 
+interface QueryDebugInfo {
+  query: string
+  status: number
+  totalCount: number | null
+  itemsReturned: number | null
+  message: string | null
+  rateLimitRemaining: string | null
+  rateLimitReset: string | null
+}
+
+interface DebugInfo {
+  timestamp: string
+  username: string | null
+  tokenPreview: string | null
+  queries: QueryDebugInfo[]
+}
+
 function DashboardPage() {
   const navigate = useNavigate()
   const [user, setUser] = useState<GitHubUser | null>(null)
   const [orgPRs, setOrgPRs] = useState<OrgPRs[]>([])
+  const [recentlyReviewedPRs, setRecentlyReviewedPRs] = useState<OrgPRs[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
 
   useEffect(() => {
     const userJson = localStorage.getItem('github_user')
@@ -50,16 +72,24 @@ function DashboardPage() {
       setLoading(true)
       setError(null)
       const token = localStorage.getItem('github_access_token')
+      const userJson = localStorage.getItem('github_user')
+      const username = userJson ? JSON.parse(userJson).login : null
 
       if (!token) {
         navigate('/')
         return
       }
 
-      const queries = [
+      const tokenPreview = token.length > 8
+        ? `${token.slice(0, 4)}..${token.slice(-4)}`
+        : '(short token)'
+
+      const pendingQueries = [
         'is:open is:pr review-requested:@me',
         'is:open is:pr assignee:@me',
       ]
+      const reviewedQuery = 'is:pr reviewed-by:@me sort:updated-desc'
+      const allQueries = [...pendingQueries, reviewedQuery]
 
       const headers = {
         'Authorization': `Bearer ${token}`,
@@ -67,10 +97,23 @@ function DashboardPage() {
       }
 
       const responses = await Promise.all(
-        queries.map(q =>
-          fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(q)}&per_page=100`, { headers })
+        allQueries.map(q =>
+          fetch(
+            `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&per_page=${q === reviewedQuery ? '30' : '100'}`,
+            { headers }
+          )
         )
       )
+
+      const queryDebugInfos: QueryDebugInfo[] = responses.map((resp, i) => ({
+        query: allQueries[i],
+        status: resp.status,
+        totalCount: null,
+        itemsReturned: null,
+        message: null,
+        rateLimitRemaining: resp.headers.get('X-RateLimit-Remaining'),
+        rateLimitReset: resp.headers.get('X-RateLimit-Reset'),
+      }))
 
       for (const resp of responses) {
         if (resp.status === 401) {
@@ -83,28 +126,46 @@ function DashboardPage() {
 
       const results = await Promise.all(responses.map(r => r.json()))
 
+      results.forEach((data, i) => {
+        queryDebugInfos[i].totalCount = data.total_count ?? null
+        queryDebugInfos[i].itemsReturned = data.items ? data.items.length : null
+        queryDebugInfos[i].message = data.message || null
+      })
+
+      setDebugInfo({
+        timestamp: new Date().toISOString(),
+        username,
+        tokenPreview,
+        queries: queryDebugInfos,
+      })
+
       for (const data of results) {
-        if (data.message) {
+        if (data.message && !data.items) {
           throw new Error(data.message)
         }
       }
 
+      const pendingResults = results.slice(0, 2)
       const seen = new Set<number>()
-      const allItems: any[] = []
-      for (const data of results) {
+      const pendingItems: any[] = []
+      for (const data of pendingResults) {
+        if (!data.items) continue
         for (const item of data.items) {
           if (!seen.has(item.id)) {
             seen.add(item.id)
-            allItems.push(item)
+            pendingItems.push(item)
           }
         }
       }
 
-      const pullRequests: PullRequest[] = allItems.map((item: any) => ({
+      const mapItem = (item: any): PullRequest => ({
         id: item.id,
         title: item.title,
         html_url: item.html_url,
         created_at: item.created_at,
+        updated_at: item.updated_at,
+        state: item.state,
+        pull_request_merged: item.pull_request?.merged_at != null,
         repository: {
           name: item.repository_url.split('/').pop(),
           full_name: item.repository_url.split('/').slice(-2).join('/'),
@@ -115,27 +176,42 @@ function DashboardPage() {
           avatar_url: item.user.avatar_url,
         },
         draft: item.draft || false,
-      }))
-
-      const grouped = pullRequests.reduce((acc, pr) => {
-        const org = pr.repository.full_name.split('/')[0]
-        const existing = acc.find(g => g.org === org)
-        if (existing) {
-          existing.pullRequests.push(pr)
-        } else {
-          acc.push({ org, pullRequests: [pr] })
-        }
-        return acc
-      }, [] as OrgPRs[])
-
-      grouped.sort((a, b) => a.org.localeCompare(b.org))
-      grouped.forEach(g => {
-        g.pullRequests.sort((a, b) =>
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        )
       })
 
-      setOrgPRs(grouped)
+      const groupByOrg = (prs: PullRequest[]): OrgPRs[] => {
+        const grouped = prs.reduce((acc, pr) => {
+          const org = pr.repository.full_name.split('/')[0]
+          const existing = acc.find(g => g.org === org)
+          if (existing) {
+            existing.pullRequests.push(pr)
+          } else {
+            acc.push({ org, pullRequests: [pr] })
+          }
+          return acc
+        }, [] as OrgPRs[])
+        grouped.sort((a, b) => a.org.localeCompare(b.org))
+        grouped.forEach(g => {
+          g.pullRequests.sort((a, b) =>
+            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+          )
+        })
+        return grouped
+      }
+
+      const pendingPRs = pendingItems.map(mapItem)
+      setOrgPRs(groupByOrg(pendingPRs))
+
+      const reviewedData = results[2]
+      if (reviewedData.items) {
+        const pendingIds = new Set(pendingItems.map((it: any) => it.id))
+        const reviewedItems = reviewedData.items.filter(
+          (item: any) => !pendingIds.has(item.id)
+        )
+        const reviewedPRs = reviewedItems.map(mapItem)
+        setRecentlyReviewedPRs(groupByOrg(reviewedPRs))
+      } else {
+        setRecentlyReviewedPRs([])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch pull requests')
       console.error('Error fetching PRs:', err)
@@ -163,7 +239,60 @@ function DashboardPage() {
     return date.toLocaleDateString()
   }
 
+  const getPrStateBadge = (pr: PullRequest) => {
+    if (pr.pull_request_merged) return { label: 'Merged', className: 'state-badge state-merged' }
+    if (pr.state === 'closed') return { label: 'Closed', className: 'state-badge state-closed' }
+    return { label: 'Open', className: 'state-badge state-open' }
+  }
+
   const totalPRs = orgPRs.reduce((sum, org) => sum + org.pullRequests.length, 0)
+  const totalReviewed = recentlyReviewedPRs.reduce((sum, org) => sum + org.pullRequests.length, 0)
+
+  const renderPRCard = (pr: PullRequest, showState: boolean) => (
+    <a
+      key={pr.id}
+      href={pr.html_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="pr-card"
+    >
+      <div className="pr-header">
+        <div className="pr-repo">
+          <svg className="repo-icon" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/>
+          </svg>
+          {pr.repository.name}
+        </div>
+        <div className="pr-badges">
+          {pr.draft && <span className="draft-badge">Draft</span>}
+          {showState && (() => {
+            const badge = getPrStateBadge(pr)
+            return <span className={badge.className}>{badge.label}</span>
+          })()}
+        </div>
+      </div>
+      <h3 className="pr-title">{pr.title}</h3>
+      <div className="pr-footer">
+        <div className="pr-author">
+          <img src={pr.user.avatar_url} alt={pr.user.login} className="author-avatar" />
+          <span className="author-name">{pr.user.login}</span>
+        </div>
+        <span className="pr-date">{formatDate(pr.updated_at)}</span>
+      </div>
+    </a>
+  )
+
+  const renderOrgSection = (orgData: OrgPRs, showState: boolean) => (
+    <div key={orgData.org} className="org-section">
+      <div className="org-header">
+        <h2 className="org-name">{orgData.org}</h2>
+        <span className="org-count">{orgData.pullRequests.length} PR{orgData.pullRequests.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="prs-list">
+        {orgData.pullRequests.map((pr) => renderPRCard(pr, showState))}
+      </div>
+    </div>
+  )
 
   return (
     <div className="dashboard-container">
@@ -194,7 +323,11 @@ function DashboardPage() {
           <div className="stats-section">
             <div className="stat-card">
               <div className="stat-value">{totalPRs}</div>
-              <div className="stat-label">Pull Requests</div>
+              <div className="stat-label">Pending Reviews</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value stat-value-teal">{totalReviewed}</div>
+              <div className="stat-label">Recently Reviewed</div>
             </div>
             <div className="stat-card">
               <div className="stat-value">{orgPRs.length}</div>
@@ -220,52 +353,57 @@ function DashboardPage() {
                 Try Again
               </button>
             </div>
-          ) : orgPRs.length === 0 ? (
-            <div className="empty-state">
-              <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
-              </svg>
-              <h2>No pending reviews</h2>
-              <p>You're all caught up! No pull requests are waiting for your review.</p>
-            </div>
           ) : (
-            <div className="orgs-container">
-              {orgPRs.map((orgData) => (
-                <div key={orgData.org} className="org-section">
-                  <div className="org-header">
-                    <h2 className="org-name">{orgData.org}</h2>
-                    <span className="org-count">{orgData.pullRequests.length} PR{orgData.pullRequests.length !== 1 ? 's' : ''}</span>
+            <>
+              {orgPRs.length === 0 ? (
+                <div className="empty-state">
+                  <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
+                  </svg>
+                  <h2>No pending reviews</h2>
+                  <p>You're all caught up! No pull requests are waiting for your review.</p>
+                </div>
+              ) : (
+                <div className="section-block">
+                  <h2 className="section-title">Pending Reviews</h2>
+                  <div className="orgs-container">
+                    {orgPRs.map((orgData) => renderOrgSection(orgData, false))}
                   </div>
-                  <div className="prs-list">
-                    {orgData.pullRequests.map((pr) => (
-                      <a
-                        key={pr.id}
-                        href={pr.html_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="pr-card"
-                      >
-                        <div className="pr-header">
-                          <div className="pr-repo">
-                            <svg className="repo-icon" viewBox="0 0 16 16" fill="currentColor">
-                              <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/>
-                            </svg>
-                            {pr.repository.name}
-                          </div>
-                          {pr.draft && <span className="draft-badge">Draft</span>}
-                        </div>
-                        <h3 className="pr-title">{pr.title}</h3>
-                        <div className="pr-footer">
-                          <div className="pr-author">
-                            <img src={pr.user.avatar_url} alt={pr.user.login} className="author-avatar" />
-                            <span className="author-name">{pr.user.login}</span>
-                          </div>
-                          <span className="pr-date">{formatDate(pr.created_at)}</span>
-                        </div>
-                      </a>
-                    ))}
+                </div>
+              )}
+
+              <div className="section-block section-reviewed">
+                <h2 className="section-title section-title-teal">Recently Reviewed</h2>
+                {recentlyReviewedPRs.length === 0 ? (
+                  <p className="section-empty-message">No recently reviewed PRs found.</p>
+                ) : (
+                  <div className="orgs-container">
+                    {recentlyReviewedPRs.map((orgData) => renderOrgSection(orgData, true))}
                   </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {debugInfo && (
+            <div className="debug-panel">
+              <h3 className="debug-title">API Diagnostics</h3>
+              <div className="debug-meta">
+                <span>Fetched: {debugInfo.timestamp}</span>
+                <span>User: {debugInfo.username || '(unknown)'}</span>
+                <span>Token: {debugInfo.tokenPreview || '(none)'}</span>
+              </div>
+              {debugInfo.queries.map((q, i) => (
+                <div key={i} className="debug-query">
+                  <div className="debug-query-header">Query {i + 1}</div>
+                  <div className="debug-row"><span className="debug-label">Search</span><span className="debug-value">{q.query}</span></div>
+                  <div className="debug-row"><span className="debug-label">HTTP Status</span><span className="debug-value">{q.status}</span></div>
+                  <div className="debug-row"><span className="debug-label">Total Count</span><span className="debug-value">{q.totalCount ?? 'N/A'}</span></div>
+                  <div className="debug-row"><span className="debug-label">Items Returned</span><span className="debug-value">{q.itemsReturned ?? 'N/A'}</span></div>
+                  <div className="debug-row"><span className="debug-label">Message</span><span className="debug-value">{q.message || '(none)'}</span></div>
+                  <div className="debug-row"><span className="debug-label">Rate Limit Left</span><span className="debug-value">{q.rateLimitRemaining ?? 'N/A'}</span></div>
+                  <div className="debug-row"><span className="debug-label">Rate Reset</span><span className="debug-value">{q.rateLimitReset ? new Date(Number(q.rateLimitReset) * 1000).toLocaleTimeString() : 'N/A'}</span></div>
                 </div>
               ))}
             </div>
