@@ -36,54 +36,59 @@ export function useOrgAccess() {
         'Accept': 'application/vnd.github.v3+json',
       }
 
-      const membershipsResponse = await fetch(
-        'https://api.github.com/user/memberships/orgs?state=active&per_page=100',
+      const orgsResponse = await fetch(
+        'https://api.github.com/user/orgs?per_page=100',
         { headers }
       )
 
-      const rawScopes = membershipsResponse.headers.get('X-OAuth-Scopes')
+      const rawScopes = orgsResponse.headers.get('X-OAuth-Scopes')
       const oauthScopes = rawScopes?.trim() || null
 
-      if (!membershipsResponse.ok) {
-        setResult(prev => ({
-          ...prev,
-          oauthScopes,
-          loading: false,
-        }))
-        return
+      const orgMap = new Map<string, OrgAccessInfo>()
+
+      if (orgsResponse.ok) {
+        const orgs: Array<{ login: string; avatar_url: string }> = await orgsResponse.json()
+        for (const org of orgs) {
+          orgMap.set(org.login.toLowerCase(), {
+            login: org.login,
+            avatar_url: org.avatar_url,
+            role: 'member',
+            accessible: false,
+          })
+        }
       }
 
-      const memberships: Array<{
-        role: 'admin' | 'member'
-        organization: { login: string; avatar_url: string }
-      }> = await membershipsResponse.json()
+      for (const name of visibleOrgNames) {
+        const key = name.toLowerCase()
+        if (!orgMap.has(key)) {
+          orgMap.set(key, {
+            login: name,
+            avatar_url: `https://github.com/${name}.png?size=80`,
+            role: 'member',
+            accessible: true,
+          })
+        }
+      }
 
       const accessChecks = await Promise.all(
-        memberships.map(async (m): Promise<OrgAccessInfo> => {
+        Array.from(orgMap.values()).map(async (org): Promise<OrgAccessInfo> => {
+          if (visibleOrgNames.some(v => v.toLowerCase() === org.login.toLowerCase())) {
+            return { ...org, accessible: true }
+          }
           try {
             const resp = await fetch(
-              `https://api.github.com/orgs/${m.organization.login}/repos?per_page=1&type=private`,
+              `https://api.github.com/orgs/${org.login}/repos?per_page=1&type=private`,
               { headers }
             )
-            return {
-              login: m.organization.login,
-              avatar_url: m.organization.avatar_url,
-              role: m.role,
-              accessible: resp.ok,
-            }
+            return { ...org, accessible: resp.ok }
           } catch {
-            return {
-              login: m.organization.login,
-              avatar_url: m.organization.avatar_url,
-              role: m.role,
-              accessible: false,
-            }
+            return { ...org, accessible: false }
           }
         })
       )
 
       const restricted = accessChecks
-        .filter(o => !o.accessible && !visibleOrgNames.includes(o.login))
+        .filter(o => !o.accessible)
         .map(o => o.login)
 
       setResult({
