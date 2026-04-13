@@ -23,7 +23,7 @@ Deno.serve(async (req: Request) => {
         throw new Error("GitHub OAuth not configured");
       }
 
-      const redirectUri = url.searchParams.get("redirect_uri") || Deno.env.get("GITHUB_REDIRECT_URI") || "";
+      const redirectUri = Deno.env.get("GITHUB_REDIRECT_URI") || "";
 
       if (!redirectUri) {
         throw new Error("Could not determine redirect URI");
@@ -45,16 +45,31 @@ Deno.serve(async (req: Request) => {
 
     if (path === "callback") {
       const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+
+      const appUrl = Deno.env.get("APP_URL") || "";
+
+      if (!appUrl) {
+        throw new Error("APP_URL not configured");
+      }
 
       if (!code) {
-        throw new Error("No code provided");
+        const errorUrl = `${appUrl}/#auth_error=${encodeURIComponent("No authorization code received")}`;
+        return new Response(null, {
+          status: 302,
+          headers: { ...corsHeaders, Location: errorUrl },
+        });
       }
 
       const clientId = Deno.env.get("GITHUB_CLIENT_ID");
       const clientSecret = Deno.env.get("GITHUB_CLIENT_SECRET");
 
       if (!clientId || !clientSecret) {
-        throw new Error("GitHub OAuth not configured");
+        const errorUrl = `${appUrl}/#auth_error=${encodeURIComponent("GitHub OAuth not configured")}`;
+        return new Response(null, {
+          status: 302,
+          headers: { ...corsHeaders, Location: errorUrl },
+        });
       }
 
       const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
@@ -73,7 +88,11 @@ Deno.serve(async (req: Request) => {
       const tokenData = await tokenResponse.json();
 
       if (tokenData.error) {
-        throw new Error(tokenData.error_description || tokenData.error);
+        const errorUrl = `${appUrl}/#auth_error=${encodeURIComponent(tokenData.error_description || tokenData.error)}`;
+        return new Response(null, {
+          status: 302,
+          headers: { ...corsHeaders, Location: errorUrl },
+        });
       }
 
       const userResponse = await fetch("https://api.github.com/user", {
@@ -85,22 +104,26 @@ Deno.serve(async (req: Request) => {
 
       const userData = await userResponse.json();
 
-      return new Response(
-        JSON.stringify({
-          user: {
-            id: userData.id,
-            login: userData.login,
-            name: userData.name,
-            avatar_url: userData.avatar_url,
-            email: userData.email,
-          },
-          access_token: tokenData.access_token,
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      const user = {
+        id: userData.id,
+        login: userData.login,
+        name: userData.name,
+        avatar_url: userData.avatar_url,
+        email: userData.email,
+      };
+
+      const params = new URLSearchParams({
+        access_token: tokenData.access_token,
+        user: JSON.stringify(user),
+        state: state || "",
+      });
+
+      const successUrl = `${appUrl}/#${params.toString()}`;
+
+      return new Response(null, {
+        status: 302,
+        headers: { ...corsHeaders, Location: successUrl },
+      });
     }
 
     return new Response(

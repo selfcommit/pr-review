@@ -4,38 +4,16 @@ import './LandingPage.css'
 function LandingPage() {
   const [isLoading, setIsLoading] = useState(false)
 
-  const getOrigin = (): string => {
-    try {
-      if (window.top && window.top.location.origin) {
-        return window.top.location.origin
-      }
-    } catch {
-    }
-    return window.location.origin
-  }
-
-  const navigateTo = (url: string) => {
-    try {
-      if (window.top) {
-        window.top.location.href = url
-        return
-      }
-    } catch {
-    }
-    window.open(url, '_top')
-  }
-
   const handleSignIn = async () => {
     setIsLoading(true)
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const redirectUri = `${getOrigin()}/auth/callback`
-      const response = await fetch(`${supabaseUrl}/functions/v1/github-auth/login?redirect_uri=${encodeURIComponent(redirectUri)}`)
+      const response = await fetch(`${supabaseUrl}/functions/v1/github-auth/login`)
       const data = await response.json()
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
-        navigateTo(data.url)
+        window.location.href = data.url
       }
     } catch (error) {
       console.error('Sign in error:', error)
