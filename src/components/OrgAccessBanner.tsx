@@ -13,9 +13,10 @@ function OrgAccessBanner({ orgAccess, onReauthorize, reauthorizing }: OrgAccessB
   if (dismissed || orgAccess.loading) return null
 
   const hasRestrictedOrgs = orgAccess.restrictedOrgs.length > 0
-  const missingScopes = orgAccess.oauthScopes !== null && (
-    !orgAccess.oauthScopes.includes('repo') ||
-    !orgAccess.oauthScopes.includes('read:org')
+  const scopeString = orgAccess.oauthScopes?.trim() || null
+  const missingScopes = scopeString !== null && (
+    !scopeString.includes('repo') ||
+    !scopeString.includes('read:org')
   )
 
   if (!hasRestrictedOrgs && !missingScopes) return null
@@ -31,7 +32,7 @@ function OrgAccessBanner({ orgAccess, onReauthorize, reauthorizing }: OrgAccessB
         <div className="org-access-banner-body">
           {missingScopes && (
             <p className="org-access-banner-text">
-              <strong>Missing permissions:</strong> Your token is missing required scopes ({orgAccess.oauthScopes}).
+              <strong>Missing permissions:</strong> Your token is missing required scopes (current: {scopeString}).
               Re-authorize to grant the necessary access.
             </p>
           )}
