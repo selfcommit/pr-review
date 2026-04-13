@@ -3,11 +3,10 @@ import type { OrgAccessResult } from '../hooks/useOrgAccess'
 
 interface OrgAccessBannerProps {
   orgAccess: OrgAccessResult
-  onReauthorize: () => void
-  reauthorizing: boolean
+  onSwitchToOrgsTab: () => void
 }
 
-function OrgAccessBanner({ orgAccess, onReauthorize, reauthorizing }: OrgAccessBannerProps) {
+function OrgAccessBanner({ orgAccess, onSwitchToOrgsTab }: OrgAccessBannerProps) {
   const [dismissed, setDismissed] = useState(false)
 
   if (dismissed || orgAccess.loading) return null
@@ -30,46 +29,22 @@ function OrgAccessBanner({ orgAccess, onReauthorize, reauthorizing }: OrgAccessB
           </svg>
         </div>
         <div className="org-access-banner-body">
-          {missingScopes && (
+          {missingScopes ? (
             <p className="org-access-banner-text">
-              <strong>Missing permissions:</strong> Your token is missing required scopes (current: {scopeString}).
-              Re-authorize to grant the necessary access.
+              <strong>Missing permissions:</strong> Your token is missing required scopes.
+              Check the Organizations tab to re-authorize.
+            </p>
+          ) : (
+            <p className="org-access-banner-text">
+              <strong>{orgAccess.restrictedOrgs.length} organization{orgAccess.restrictedOrgs.length !== 1 ? 's need' : ' needs'} access approval.</strong>{' '}
+              Some private PRs may be hidden.
             </p>
           )}
-          {hasRestrictedOrgs && (
-            <>
-              <p className="org-access-banner-text">
-                <strong>Organization access restricted:</strong> The following organizations may be blocking this app
-                from accessing their repositories:
-              </p>
-              <div className="org-access-restricted-list">
-                {orgAccess.restrictedOrgs.map(org => (
-                  <a
-                    key={org}
-                    href={`https://github.com/organizations/${org}/settings/oauth_application_policy`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="org-access-restricted-item"
-                  >
-                    {org}
-                    <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
-                      <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-2.19l5.72 5.72a.75.75 0 1 1-1.06 1.06L4 4.56v2.19a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 3.25 2.5h.5zm5.5 7a.75.75 0 0 1 .75-.75h3.25a.75.75 0 0 1 .75.75v4.25a.75.75 0 0 1-.75.75H4.75a.75.75 0 0 1-.75-.75V9.75a.75.75 0 0 1 1.5 0v2.75h7V9.75a.75.75 0 0 1-.75-.75z"/>
-                    </svg>
-                  </a>
-                ))}
-              </div>
-              <p className="org-access-banner-hint">
-                An org admin needs to approve this app in the organization's settings.
-                After approval, click "Re-authorize" to refresh your access.
-              </p>
-            </>
-          )}
-          <button
-            className="org-access-reauth-button"
-            onClick={onReauthorize}
-            disabled={reauthorizing}
-          >
-            {reauthorizing ? 'Redirecting...' : 'Re-authorize with GitHub'}
+          <button className="org-access-banner-link" onClick={onSwitchToOrgsTab}>
+            View Organizations
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+              <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clipRule="evenodd" />
+            </svg>
           </button>
         </div>
         <button

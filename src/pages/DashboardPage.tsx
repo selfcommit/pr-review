@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
 import { isInIframe } from '../utils/iframe'
 import OrgAccessBanner from '../components/OrgAccessBanner'
+import OrganizationsTab from '../components/OrganizationsTab'
 import './DashboardPage.css'
 
 interface PullRequest {
@@ -53,6 +54,8 @@ interface DebugInfo {
   queries: QueryDebugInfo[]
 }
 
+type TabId = 'pull-requests' | 'organizations'
+
 function DashboardPage() {
   const navigate = useNavigate()
   const [user, setUser] = useState<GitHubUser | null>(null)
@@ -63,6 +66,7 @@ function DashboardPage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
   const [reauthorizing, setReauthorizing] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const { orgAccess, checkOrgAccess } = useOrgAccess()
 
   const handleOAuthMessage = useCallback((event: MessageEvent) => {
@@ -263,6 +267,7 @@ function DashboardPage() {
   const handleSignOut = () => {
     localStorage.removeItem('github_access_token')
     localStorage.removeItem('github_user')
+    localStorage.removeItem('github_client_id')
     navigate('/')
   }
 
@@ -280,6 +285,7 @@ function DashboardPage() {
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
+        if (data.client_id) localStorage.setItem('github_client_id', data.client_id)
         if (isInIframe()) {
           window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
         } else {
@@ -312,6 +318,7 @@ function DashboardPage() {
 
   const totalPRs = orgPRs.reduce((sum, org) => sum + org.pullRequests.length, 0)
   const totalReviewed = recentlyReviewedPRs.reduce((sum, org) => sum + org.pullRequests.length, 0)
+  const restrictedCount = orgAccess.restrictedOrgs.length
 
   const renderPRCard = (pr: PullRequest, showState: boolean) => (
     <a
@@ -395,7 +402,7 @@ function DashboardPage() {
               <div className="stat-label">Recently Reviewed</div>
             </div>
             <div className="stat-card">
-              <div className="stat-value">{orgPRs.length}</div>
+              <div className="stat-value">{orgAccess.memberOrgs.length}</div>
               <div className="stat-label">Organizations</div>
             </div>
             <button onClick={fetchPullRequests} className="refresh-button" disabled={loading}>
@@ -406,57 +413,92 @@ function DashboardPage() {
             </button>
           </div>
 
-          {!loading && !error && (
-            <OrgAccessBanner
+          <div className="tab-bar">
+            <button
+              className={`tab-button ${activeTab === 'pull-requests' ? 'tab-button-active' : ''}`}
+              onClick={() => setActiveTab('pull-requests')}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+                <path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"/>
+              </svg>
+              Pull Requests
+            </button>
+            <button
+              className={`tab-button ${activeTab === 'organizations' ? 'tab-button-active' : ''}`}
+              onClick={() => setActiveTab('organizations')}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+                <path d="M1.75 16A1.75 1.75 0 0 1 0 14.25V1.75C0 .784.784 0 1.75 0h8.5C11.216 0 12 .784 12 1.75v12.5c0 .085-.006.168-.018.25h2.268a.25.25 0 0 0 .25-.25V8.285a.25.25 0 0 0-.111-.208l-1.055-.703a.749.749 0 1 1 .832-1.248l1.055.703c.487.325.777.871.777 1.456v5.965A1.75 1.75 0 0 1 14.25 16h-3.5a.766.766 0 0 1-.197-.026c-.099.017-.2.026-.303.026h-3a.75.75 0 0 1-.75-.75V14h-1v1.25a.75.75 0 0 1-.75.75Zm-.25-1.75c0 .138.112.25.25.25H4v-1.25a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 .75.75v1.25h2.25a.25.25 0 0 0 .25-.25V1.75a.25.25 0 0 0-.25-.25h-8.5a.25.25 0 0 0-.25.25ZM3.75 6h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1 0-1.5ZM3 3.75A.75.75 0 0 1 3.75 3h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 3 3.75Zm4 3A.75.75 0 0 1 7.75 6h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 7 6.75ZM7.75 3h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1 0-1.5Z"/>
+              </svg>
+              Organizations
+              {restrictedCount > 0 && (
+                <span className="tab-badge">{restrictedCount}</span>
+              )}
+            </button>
+          </div>
+
+          {activeTab === 'pull-requests' && (
+            <>
+              {!loading && !error && (
+                <OrgAccessBanner
+                  orgAccess={orgAccess}
+                  onSwitchToOrgsTab={() => setActiveTab('organizations')}
+                />
+              )}
+
+              {loading ? (
+                <div className="loading-state">
+                  <div className="spinner"></div>
+                  <p>Loading pull requests...</p>
+                </div>
+              ) : error ? (
+                <div className="error-state">
+                  <p className="error-message">{error}</p>
+                  <button onClick={fetchPullRequests} className="retry-button">
+                    Try Again
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {orgPRs.length === 0 ? (
+                    <div className="empty-state">
+                      <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
+                      </svg>
+                      <h2>No pending reviews</h2>
+                      <p>You're all caught up! No pull requests are waiting for your review.</p>
+                    </div>
+                  ) : (
+                    <div className="section-block">
+                      <h2 className="section-title">Pending Reviews</h2>
+                      <div className="orgs-container">
+                        {orgPRs.map((orgData) => renderOrgSection(orgData, false))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="section-block section-reviewed">
+                    <h2 className="section-title section-title-teal">Recently Reviewed</h2>
+                    {recentlyReviewedPRs.length === 0 ? (
+                      <p className="section-empty-message">No recently reviewed PRs found.</p>
+                    ) : (
+                      <div className="orgs-container">
+                        {recentlyReviewedPRs.map((orgData) => renderOrgSection(orgData, true))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {activeTab === 'organizations' && (
+            <OrganizationsTab
               orgAccess={orgAccess}
               onReauthorize={handleReauthorize}
               reauthorizing={reauthorizing}
             />
-          )}
-
-          {loading ? (
-            <div className="loading-state">
-              <div className="spinner"></div>
-              <p>Loading pull requests...</p>
-            </div>
-          ) : error ? (
-            <div className="error-state">
-              <p className="error-message">{error}</p>
-              <button onClick={fetchPullRequests} className="retry-button">
-                Try Again
-              </button>
-            </div>
-          ) : (
-            <>
-              {orgPRs.length === 0 ? (
-                <div className="empty-state">
-                  <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
-                  </svg>
-                  <h2>No pending reviews</h2>
-                  <p>You're all caught up! No pull requests are waiting for your review.</p>
-                </div>
-              ) : (
-                <div className="section-block">
-                  <h2 className="section-title">Pending Reviews</h2>
-                  <div className="orgs-container">
-                    {orgPRs.map((orgData) => renderOrgSection(orgData, false))}
-                  </div>
-                </div>
-              )}
-
-              <div className="section-block section-reviewed">
-                <h2 className="section-title section-title-teal">Recently Reviewed</h2>
-                {recentlyReviewedPRs.length === 0 ? (
-                  <p className="section-empty-message">No recently reviewed PRs found.</p>
-                ) : (
-                  <div className="orgs-container">
-                    {recentlyReviewedPRs.map((orgData) => renderOrgSection(orgData, true))}
-                  </div>
-                )}
-              </div>
-            </>
           )}
 
           {debugInfo && (

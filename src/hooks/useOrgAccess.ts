@@ -2,6 +2,8 @@ import { useState, useCallback } from 'react'
 
 export interface OrgAccessInfo {
   login: string
+  avatar_url: string
+  role: 'admin' | 'member'
   accessible: boolean
 }
 
@@ -34,15 +36,15 @@ export function useOrgAccess() {
         'Accept': 'application/vnd.github.v3+json',
       }
 
-      const orgsResponse = await fetch(
-        'https://api.github.com/user/orgs?per_page=100',
+      const membershipsResponse = await fetch(
+        'https://api.github.com/user/memberships/orgs?state=active&per_page=100',
         { headers }
       )
 
-      const rawScopes = orgsResponse.headers.get('X-OAuth-Scopes')
+      const rawScopes = membershipsResponse.headers.get('X-OAuth-Scopes')
       const oauthScopes = rawScopes?.trim() || null
 
-      if (!orgsResponse.ok) {
+      if (!membershipsResponse.ok) {
         setResult(prev => ({
           ...prev,
           oauthScopes,
@@ -51,19 +53,31 @@ export function useOrgAccess() {
         return
       }
 
-      const orgs: Array<{ login: string }> = await orgsResponse.json()
-      const memberOrgNames = orgs.map(o => o.login)
+      const memberships: Array<{
+        role: 'admin' | 'member'
+        organization: { login: string; avatar_url: string }
+      }> = await membershipsResponse.json()
 
       const accessChecks = await Promise.all(
-        memberOrgNames.map(async (orgLogin): Promise<OrgAccessInfo> => {
+        memberships.map(async (m): Promise<OrgAccessInfo> => {
           try {
             const resp = await fetch(
-              `https://api.github.com/orgs/${orgLogin}/repos?per_page=1`,
+              `https://api.github.com/orgs/${m.organization.login}/repos?per_page=1&type=private`,
               { headers }
             )
-            return { login: orgLogin, accessible: resp.ok }
+            return {
+              login: m.organization.login,
+              avatar_url: m.organization.avatar_url,
+              role: m.role,
+              accessible: resp.ok,
+            }
           } catch {
-            return { login: orgLogin, accessible: false }
+            return {
+              login: m.organization.login,
+              avatar_url: m.organization.avatar_url,
+              role: m.role,
+              accessible: false,
+            }
           }
         })
       )

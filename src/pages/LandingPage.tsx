@@ -52,6 +52,7 @@ function LandingPage() {
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
+        if (data.client_id) localStorage.setItem('github_client_id', data.client_id)
 
         if (isInIframe()) {
           const popup = window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')

@@ -71,7 +71,7 @@ Deno.serve(async (req: Request) => {
       console.log("[login] githubAuthUrl:", githubAuthUrl);
 
       return new Response(
-        JSON.stringify({ url: githubAuthUrl, state: statePayload }),
+        JSON.stringify({ url: githubAuthUrl, state: statePayload, client_id: clientId }),
         {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
