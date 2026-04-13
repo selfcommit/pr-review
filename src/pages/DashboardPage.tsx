@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
 import { isInIframe } from '../utils/iframe'
+import { getCachedUser, setCachedUser, setSessionToken, logout, revokeGrant, apiGet, getSessionToken } from '../utils/api'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import './DashboardPage.css'
@@ -50,7 +51,6 @@ interface QueryDebugInfo {
 interface DebugInfo {
   timestamp: string
   username: string | null
-  tokenPreview: string | null
   queries: QueryDebugInfo[]
 }
 
@@ -65,37 +65,40 @@ function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
-  const [reauthorizing, setReauthorizing] = useState(false)
-  const [reauthorizeError, setReauthorizeError] = useState<string | null>(null)
+  const [managing, setManaging] = useState(false)
+  const [manageError, setManageError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
-  const { orgAccess, checkOrgAccess } = useOrgAccess()
+  const { orgAccess, fetchOrgs } = useOrgAccess()
 
   const handleOAuthMessage = useCallback((event: MessageEvent) => {
     if (event.origin !== window.location.origin) return
     if (event.data?.type !== 'github-oauth-callback') return
 
-    const { access_token, user: userParam, state } = event.data
+    const { session_token, user: userParam, state } = event.data
     const savedState = sessionStorage.getItem('github_oauth_state')
 
-    if (access_token && state && state === savedState && userParam) {
-      localStorage.setItem('github_access_token', access_token)
-      localStorage.setItem('github_user', userParam)
+    if (session_token && state && state === savedState && userParam) {
+      setSessionToken(session_token)
+      const parsed = JSON.parse(userParam)
+      setCachedUser(parsed)
       sessionStorage.removeItem('github_oauth_state')
-      setUser(JSON.parse(userParam))
-      setReauthorizing(false)
+      setUser(parsed)
+      setManaging(false)
       fetchPullRequests()
+      fetchOrgs()
     } else {
-      setReauthorizing(false)
+      setManaging(false)
     }
-  }, [])
+  }, [fetchOrgs])
 
   useEffect(() => {
-    const userJson = localStorage.getItem('github_user')
-    if (userJson) {
-      setUser(JSON.parse(userJson))
+    const cached = getCachedUser()
+    if (cached) {
+      setUser(cached)
     }
     fetchPullRequests()
-  }, [])
+    fetchOrgs()
+  }, [fetchOrgs])
 
   useEffect(() => {
     window.addEventListener('message', handleOAuthMessage)
@@ -106,18 +109,19 @@ function DashboardPage() {
     try {
       setLoading(true)
       setError(null)
-      const token = localStorage.getItem('github_access_token')
-      const userJson = localStorage.getItem('github_user')
-      const username = userJson ? JSON.parse(userJson).login : null
 
-      if (!token) {
+      if (!getSessionToken()) {
         navigate('/')
         return
       }
 
-      const tokenPreview = token.length > 8
-        ? `${token.slice(0, 4)}..${token.slice(-4)}`
-        : '(short token)'
+      const data = await apiGet<{
+        pending: Array<{ items?: Array<Record<string, unknown>>; total_count?: number; message?: string }>
+        reviewed: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string }
+        username: string
+        rateLimitRemaining: string | null
+        rateLimitReset: string | null
+      }>('pull-requests')
 
       const pendingQueries = [
         'is:open is:pr review-requested:@me',
@@ -125,93 +129,68 @@ function DashboardPage() {
       ]
       const reviewedQuery = 'is:pr reviewed-by:@me sort:updated-desc'
       const allQueries = [...pendingQueries, reviewedQuery]
+      const allResults = [...data.pending, data.reviewed]
 
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/vnd.github.v3+json',
-      }
-
-      const responses = await Promise.all(
-        allQueries.map(q =>
-          fetch(
-            `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&per_page=${q === reviewedQuery ? '30' : '100'}`,
-            { headers }
-          )
-        )
-      )
-
-      const queryDebugInfos: QueryDebugInfo[] = responses.map((resp, i) => ({
+      const queryDebugInfos: QueryDebugInfo[] = allResults.map((result, i) => ({
         query: allQueries[i],
-        status: resp.status,
-        totalCount: null,
-        itemsReturned: null,
-        message: null,
-        rateLimitRemaining: resp.headers.get('X-RateLimit-Remaining'),
-        rateLimitReset: resp.headers.get('X-RateLimit-Reset'),
+        status: result.message ? 422 : 200,
+        totalCount: result.total_count ?? null,
+        itemsReturned: result.items ? result.items.length : null,
+        message: (result.message as string) || null,
+        rateLimitRemaining: i === 0 ? data.rateLimitRemaining : null,
+        rateLimitReset: i === 0 ? data.rateLimitReset : null,
       }))
-
-      for (const resp of responses) {
-        if (resp.status === 401) {
-          localStorage.removeItem('github_access_token')
-          localStorage.removeItem('github_user')
-          navigate('/')
-          return
-        }
-      }
-
-      const results = await Promise.all(responses.map(r => r.json()))
-
-      results.forEach((data, i) => {
-        queryDebugInfos[i].totalCount = data.total_count ?? null
-        queryDebugInfos[i].itemsReturned = data.items ? data.items.length : null
-        queryDebugInfos[i].message = data.message || null
-      })
 
       setDebugInfo({
         timestamp: new Date().toISOString(),
-        username,
-        tokenPreview,
+        username: data.username,
         queries: queryDebugInfos,
       })
 
-      for (const data of results) {
-        if (data.message && !data.items) {
-          throw new Error(data.message)
+      for (const result of allResults) {
+        if (result.message && !result.items) {
+          throw new Error(result.message as string)
         }
       }
 
-      const pendingResults = results.slice(0, 2)
       const seen = new Set<number>()
-      const pendingItems: any[] = []
-      for (const data of pendingResults) {
-        if (!data.items) continue
-        for (const item of data.items) {
-          if (!seen.has(item.id)) {
-            seen.add(item.id)
+      const pendingItems: Array<Record<string, unknown>> = []
+      for (const result of data.pending) {
+        if (!result.items) continue
+        for (const item of result.items) {
+          const itemId = item.id as number
+          if (!seen.has(itemId)) {
+            seen.add(itemId)
             pendingItems.push(item)
           }
         }
       }
 
-      const mapItem = (item: any): PullRequest => ({
-        id: item.id,
-        title: item.title,
-        html_url: item.html_url,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
-        state: item.state,
-        pull_request_merged: item.pull_request?.merged_at != null,
-        repository: {
-          name: item.repository_url.split('/').pop(),
-          full_name: item.repository_url.split('/').slice(-2).join('/'),
-          html_url: item.html_url.split('/pull/')[0],
-        },
-        user: {
-          login: item.user.login,
-          avatar_url: item.user.avatar_url,
-        },
-        draft: item.draft || false,
-      })
+      const mapItem = (item: Record<string, unknown>): PullRequest => {
+        const repoUrl = item.repository_url as string
+        const htmlUrl = item.html_url as string
+        const itemUser = item.user as { login: string; avatar_url: string }
+        const pr = item.pull_request as { merged_at?: string } | undefined
+        return {
+          id: item.id as number,
+          title: item.title as string,
+          html_url: htmlUrl,
+          created_at: item.created_at as string,
+          updated_at: item.updated_at as string,
+          state: item.state as string,
+          pull_request_merged: pr?.merged_at != null,
+          repository: {
+            name: repoUrl.split('/').pop()!,
+            full_name: repoUrl.split('/').slice(-2).join('/'),
+            html_url: htmlUrl.split('/pull/')[0],
+          },
+          user: {
+            login: itemUser.login,
+            avatar_url: itemUser.avatar_url,
+          },
+          draft: (item.draft as boolean) || false,
+        }
+      }
 
       const groupByOrg = (prs: PullRequest[]): OrgPRs[] => {
         const grouped = prs.reduce((acc, pr) => {
@@ -236,46 +215,37 @@ function DashboardPage() {
       const pendingPRs = pendingItems.map(mapItem)
       setOrgPRs(groupByOrg(pendingPRs))
 
-      const reviewedData = results[2]
-      if (reviewedData.items) {
-        const pendingIds = new Set(pendingItems.map((it: any) => it.id))
-        const reviewedItems = reviewedData.items.filter(
-          (item: any) => !pendingIds.has(item.id)
+      if (data.reviewed.items) {
+        const pendingIds = new Set(pendingItems.map((it) => it.id as number))
+        const reviewedItems = data.reviewed.items.filter(
+          (item) => !pendingIds.has(item.id as number)
         )
         const reviewedPRs = reviewedItems.map(mapItem)
         setRecentlyReviewedPRs(groupByOrg(reviewedPRs))
       } else {
         setRecentlyReviewedPRs([])
       }
-
-      const allVisibleOrgs = new Set<string>()
-      pendingPRs.forEach(pr => allVisibleOrgs.add(pr.repository.full_name.split('/')[0]))
-      if (reviewedData.items) {
-        reviewedData.items.forEach((item: any) => {
-          const orgName = item.repository_url.split('/').slice(-2)[0]
-          allVisibleOrgs.add(orgName)
-        })
-      }
-      checkOrgAccess(Array.from(allVisibleOrgs))
     } catch (err) {
+      if (err instanceof Error && err.message === 'Session expired') {
+        return
+      }
       setError(err instanceof Error ? err.message : 'Failed to fetch pull requests')
-      console.error('Error fetching PRs:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSignOut = () => {
-    localStorage.removeItem('github_access_token')
-    localStorage.removeItem('github_user')
-    localStorage.removeItem('github_client_id')
+  const handleSignOut = async () => {
+    await logout()
     navigate('/')
   }
 
-  const initiateOAuthFlow = async () => {
-    setReauthorizing(true)
-    setReauthorizeError(null)
+  const handleManageAccess = async () => {
+    setManaging(true)
+    setManageError(null)
     try {
+      await revokeGrant()
+
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const origin = window.location.origin
       const callbackPath = isInIframe() ? '/auth/callback' : ''
@@ -287,40 +257,25 @@ function DashboardPage() {
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
-        if (data.client_id) localStorage.setItem('github_client_id', data.client_id)
         if (isInIframe()) {
           const popup = window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
           if (!popup) {
-            setReauthorizeError('Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.')
-            setReauthorizing(false)
+            setManageError('Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.')
+            setManaging(false)
           }
         } else {
           window.location.href = data.url
         }
       } else {
-        const message = data.message || data.error || 'Failed to initiate re-authorization. Please try again.'
-        setReauthorizeError(message)
-        setReauthorizing(false)
+        setManageError(data.message || data.error || 'Failed to start authorization flow.')
+        setManaging(false)
       }
     } catch (err) {
-      setReauthorizeError(
-        err instanceof Error && err.message
-          ? `Could not reach the authentication service: ${err.message}`
-          : 'Could not reach the authentication service. Check your connection and try again.'
+      setManageError(
+        err instanceof Error ? err.message : 'Could not reach the authentication service.'
       )
-      setReauthorizing(false)
+      setManaging(false)
     }
-  }
-
-  const handleReauthorize = () => {
-    initiateOAuthFlow()
-  }
-
-  const handleRevokeAndReconnect = () => {
-    localStorage.removeItem('github_access_token')
-    localStorage.removeItem('github_user')
-    localStorage.removeItem('github_client_id')
-    initiateOAuthFlow()
   }
 
   const formatDate = (dateString: string) => {
@@ -522,10 +477,9 @@ function DashboardPage() {
           {activeTab === 'organizations' && (
             <OrganizationsTab
               orgAccess={orgAccess}
-              onReauthorize={handleReauthorize}
-              onRevokeAndReconnect={handleRevokeAndReconnect}
-              reauthorizing={reauthorizing}
-              reauthorizeError={reauthorizeError}
+              onManageAccess={handleManageAccess}
+              managing={managing}
+              manageError={manageError}
             />
           )}
 
@@ -551,10 +505,6 @@ function DashboardPage() {
                   <div className="debug-meta">
                     <span>Fetched: {debugInfo.timestamp}</span>
                     <span>User: {debugInfo.username || '(unknown)'}</span>
-                    <span>Token: {debugInfo.tokenPreview || '(none)'}</span>
-                    {orgAccess.oauthScopes && (
-                      <span>Scopes: {orgAccess.oauthScopes}</span>
-                    )}
                   </div>
 
                   {orgAccess.memberOrgs.length > 0 && (

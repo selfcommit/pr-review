@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import LandingPage from './pages/LandingPage'
 import DashboardPage from './pages/DashboardPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
+import { getSessionToken, setSessionToken, setCachedUser } from './utils/api'
 
 const ERROR_CODE_MESSAGES: Record<string, string> = {
   access_denied: "You cancelled the sign-in request on GitHub.",
@@ -35,66 +36,52 @@ function App() {
 
   useEffect(() => {
     const hash = window.location.hash.slice(1)
-    console.log('[App] raw window.location.hash:', window.location.hash)
 
     if (hash) {
       const params = new URLSearchParams(hash)
-      const accessToken = params.get('access_token')
+      const sessionToken = params.get('session_token')
       const error = params.get('auth_error')
       const errorCode = params.get('auth_error_code')
       const state = params.get('state')
       const savedState = sessionStorage.getItem('github_oauth_state')
 
-      console.log('[App] hash params - access_token present:', !!accessToken)
-      console.log('[App] hash params - auth_error:', error || '(none)')
-      console.log('[App] hash params - auth_error_code:', errorCode || '(none)')
-      console.log('[App] hash params - state from hash:', state)
-      console.log('[App] sessionStorage savedState:', savedState)
-      console.log('[App] state match:', state === savedState)
-
       window.history.replaceState(null, '', window.location.pathname)
 
       if (error) {
-        console.log('[App] auth error detected:', error, '| code:', errorCode)
         setAuthError(getFriendlyError(error, errorCode))
         setIsAuthenticated(false)
         return
       }
 
-      if (accessToken && state && state === savedState) {
+      if (sessionToken && state && state === savedState) {
         const userRaw = params.get('user')
-        console.log('[App] user param present:', !!userRaw)
         if (userRaw) {
           try {
-            localStorage.setItem('github_access_token', accessToken)
-            localStorage.setItem('github_user', userRaw)
+            setSessionToken(sessionToken)
+            setCachedUser(JSON.parse(userRaw))
             sessionStorage.removeItem('github_oauth_state')
-            console.log('[App] auth success, setting authenticated')
             setIsAuthenticated(true)
             return
-          } catch (e) {
-            console.error('[App] failed to store auth data:', e)
+          } catch {
             setAuthError({
               heading: "Sign-in failed.",
-              detail: "Could not save your session to local storage. Please check your browser settings and try again.",
+              detail: "Could not save your session. Please check your browser settings and try again.",
             })
             setIsAuthenticated(false)
             return
           }
         }
-      } else if (accessToken) {
-        console.warn('[App] state mismatch - accessToken present but state did not match')
+      } else if (sessionToken) {
         setAuthError({
           heading: "Sign-in could not be completed due to a security check failure.",
-          detail: "The session state did not match. This can happen if you opened multiple sign-in tabs or your session expired. Please try signing in again.",
+          detail: "The session state did not match. Please try signing in again.",
         })
         setIsAuthenticated(false)
         return
       }
     }
 
-    const token = localStorage.getItem('github_access_token')
-    console.log('[App] no hash, existing token present:', !!token)
+    const token = getSessionToken()
     setIsAuthenticated(!!token)
   }, [])
 

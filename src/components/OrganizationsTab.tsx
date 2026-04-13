@@ -2,43 +2,12 @@ import type { OrgAccessResult } from '../hooks/useOrgAccess'
 
 interface OrganizationsTabProps {
   orgAccess: OrgAccessResult
-  onReauthorize: () => void
-  onRevokeAndReconnect: () => void
-  reauthorizing: boolean
-  reauthorizeError: string | null
+  onManageAccess: () => void
+  managing: boolean
+  manageError: string | null
 }
 
-function OrganizationsTab({ orgAccess, onReauthorize, onRevokeAndReconnect, reauthorizing, reauthorizeError }: OrganizationsTabProps) {
-  const clientId = localStorage.getItem('github_client_id')
-
-  const githubSettingsUrl = clientId
-    ? `https://github.com/settings/connections/applications/${clientId}`
-    : null
-
-  const handleGrantAccess = (orgLogin: string) => {
-    if (githubSettingsUrl) {
-      window.open(githubSettingsUrl, '_blank', 'noopener,noreferrer')
-    } else {
-      window.open(
-        `https://github.com/organizations/${orgLogin}/settings/oauth_application_policy`,
-        '_blank',
-        'noopener,noreferrer'
-      )
-    }
-  }
-
-  const handleOpenGitHubSettings = () => {
-    if (githubSettingsUrl) {
-      window.open(githubSettingsUrl, '_blank', 'noopener,noreferrer')
-    } else {
-      window.open('https://github.com/settings/applications', '_blank', 'noopener,noreferrer')
-    }
-  }
-
-  const handleRevokeApp = () => {
-    window.open('https://github.com/settings/applications', '_blank', 'noopener,noreferrer')
-  }
-
+function OrganizationsTab({ orgAccess, onManageAccess, managing, manageError }: OrganizationsTabProps) {
   if (orgAccess.loading) {
     return (
       <div className="orgs-tab-loading">
@@ -61,10 +30,8 @@ function OrganizationsTab({ orgAccess, onReauthorize, onRevokeAndReconnect, reau
               <span className="orgs-tab-count orgs-tab-count-warning">{restricted.length}</span>
             </h2>
             <p className="orgs-tab-section-desc">
-              These organizations have not granted this app access to their private repositories.
-              {restricted.some(o => o.role === 'admin')
-                ? ' As an admin, you can approve the app directly.'
-                : ' An organization admin may need to approve the app.'}
+              These organizations have not granted this app access to their data.
+              Use "Manage Organization Access" below to update permissions.
             </p>
           </div>
           <div className="orgs-tab-list">
@@ -79,35 +46,9 @@ function OrganizationsTab({ orgAccess, onReauthorize, onRevokeAndReconnect, reau
                 </div>
                 <div className="orgs-tab-card-right">
                   <span className="orgs-tab-status orgs-tab-status-restricted">Access Required</span>
-                  <button
-                    className="orgs-tab-grant-btn"
-                    onClick={() => handleGrantAccess(org.login)}
-                  >
-                    Grant Access
-                    <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
-                      <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-2.19l5.72 5.72a.75.75 0 1 1-1.06 1.06L4 4.56v2.19a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 3.25 2.5h.5z"/>
-                    </svg>
-                  </button>
                 </div>
               </div>
             ))}
-          </div>
-          <div className="orgs-tab-hint">
-            <p>After granting access on GitHub, click "Refresh Access" to pick up the new permissions.</p>
-            <button className="orgs-tab-refresh-btn" onClick={onReauthorize} disabled={reauthorizing}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
-              </svg>
-              {reauthorizing ? 'Redirecting...' : 'Refresh Access'}
-            </button>
-            {reauthorizeError && (
-              <div className="orgs-tab-reauth-error">
-                <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-                <span>{reauthorizeError}</span>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -154,8 +95,8 @@ function OrganizationsTab({ orgAccess, onReauthorize, onRevokeAndReconnect, reau
           </svg>
           <h2>No organizations visible</h2>
           <p>
-            GitHub hides organizations that have third-party access restrictions enabled
-            until you explicitly grant this app access. Use the steps below to add your orgs.
+            Click "Manage Organization Access" below to connect your organizations.
+            GitHub will show you all orgs you belong to so you can grant access.
           </p>
         </div>
       )}
@@ -165,111 +106,45 @@ function OrganizationsTab({ orgAccess, onReauthorize, onRevokeAndReconnect, reau
           <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
             <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
           </svg>
-          <h3>Not seeing an organization?</h3>
+          <h3>Add or change organization access</h3>
         </div>
         <p className="orgs-tab-help-desc">
-          Private organizations with access restrictions will not appear here until access
-          is explicitly granted. GitHub enforces this policy -- no app can bypass it.
+          This will re-open the GitHub authorization screen where you can see all your
+          organizations and choose which ones to grant access to. You can use this to
+          both add new organizations and revoke access from existing ones.
         </p>
 
-        <div className="orgs-tab-help-method">
-          <h4 className="orgs-tab-help-method-title">
-            <span className="orgs-tab-help-method-badge orgs-tab-help-method-badge-recommended">Recommended</span>
-            Grant access from GitHub Settings
-          </h4>
-          <div className="orgs-tab-help-steps">
-            <div className="orgs-tab-help-step">
-              <span className="orgs-tab-help-step-num">1</span>
-              <div className="orgs-tab-help-step-text">
-                <strong>Open your GitHub app permissions</strong>
-                <span>Click the button below to open this app's settings on GitHub. Look for the "Organization access" section.</span>
-              </div>
-            </div>
-            <div className="orgs-tab-help-step">
-              <span className="orgs-tab-help-step-num">2</span>
-              <div className="orgs-tab-help-step-text">
-                <strong>Click "Grant" next to each organization</strong>
-                <span>If you see "Request" instead, your org admin must approve the app.</span>
-              </div>
-            </div>
-            <div className="orgs-tab-help-step">
-              <span className="orgs-tab-help-step-num">3</span>
-              <div className="orgs-tab-help-step-text">
-                <strong>Come back here and refresh your access</strong>
-                <span>Click "Refresh Access" below to pick up the new permissions. This does not re-show the GitHub org picker -- it just refreshes your token.</span>
-              </div>
-            </div>
-          </div>
-          <div className="orgs-tab-help-actions">
-            <button className="orgs-tab-help-github-btn" onClick={handleOpenGitHubSettings}>
-              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
-                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-              </svg>
-              Open GitHub Settings
-              <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
-                <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-2.19l5.72 5.72a.75.75 0 1 1-1.06 1.06L4 4.56v2.19a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 3.25 2.5h.5z"/>
-              </svg>
-            </button>
-            <button className="orgs-tab-refresh-btn" onClick={onReauthorize} disabled={reauthorizing}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
-              </svg>
-              {reauthorizing ? 'Redirecting...' : 'Refresh Access'}
-            </button>
-          </div>
+        <div className="orgs-tab-help-actions">
+          <button
+            className="orgs-tab-manage-btn"
+            onClick={onManageAccess}
+            disabled={managing}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+              <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+            {managing ? 'Redirecting to GitHub...' : 'Manage Organization Access'}
+          </button>
         </div>
 
-        <div className="orgs-tab-help-divider">
-          <span>or</span>
-        </div>
-
-        <div className="orgs-tab-help-method">
-          <h4 className="orgs-tab-help-method-title">
-            <span className="orgs-tab-help-method-badge orgs-tab-help-method-badge-alt">Alternative</span>
-            Revoke and re-connect from scratch
-          </h4>
-          <p className="orgs-tab-help-method-desc">
-            If you want GitHub to show the full organization picker again, you need to revoke
-            this app first. GitHub only displays the org selection on first-time authorization.
+        <div className="orgs-tab-help-note">
+          <p>
+            After granting access on GitHub, you will be redirected back here and your
+            organization list will update automatically.
           </p>
-          <div className="orgs-tab-help-steps">
-            <div className="orgs-tab-help-step">
-              <span className="orgs-tab-help-step-num">1</span>
-              <div className="orgs-tab-help-step-text">
-                <strong>Revoke this app on GitHub</strong>
-                <span>Go to Settings &gt; Applications &gt; Authorized OAuth Apps, find "pr-review-com" and click Revoke.</span>
-              </div>
-            </div>
-            <div className="orgs-tab-help-step">
-              <span className="orgs-tab-help-step-num">2</span>
-              <div className="orgs-tab-help-step-text">
-                <strong>Re-connect with GitHub</strong>
-                <span>Click the button below. GitHub will show the full authorization screen with the organization picker, letting you grant access to all your orgs at once.</span>
-              </div>
-            </div>
-          </div>
-          <div className="orgs-tab-help-actions">
-            <button className="orgs-tab-help-revoke-btn" onClick={handleRevokeApp}>
-              <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-                <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-2.19l5.72 5.72a.75.75 0 1 1-1.06 1.06L4 4.56v2.19a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 3.25 2.5h.5z"/>
-              </svg>
-              Open Authorized Apps
-            </button>
-            <button className="orgs-tab-revoke-reconnect-btn" onClick={onRevokeAndReconnect} disabled={reauthorizing}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
-              </svg>
-              {reauthorizing ? 'Redirecting...' : 'Re-connect with GitHub'}
-            </button>
-          </div>
+          <p>
+            If an organization shows "Request" instead of "Grant" on GitHub, your
+            org admin needs to approve the app before it can access that org's data.
+          </p>
         </div>
 
-        {reauthorizeError && (
+        {manageError && (
           <div className="orgs-tab-reauth-error">
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
             </svg>
-            <span>{reauthorizeError}</span>
+            <span>{manageError}</span>
           </div>
         )}
       </div>

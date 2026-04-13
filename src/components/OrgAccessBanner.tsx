@@ -12,24 +12,12 @@ function OrgAccessBanner({ orgAccess, onSwitchToOrgsTab }: OrgAccessBannerProps)
   if (dismissed || orgAccess.loading) return null
 
   const hasRestrictedOrgs = orgAccess.restrictedOrgs.length > 0
-  const scopeString = orgAccess.oauthScopes
-  const missingScopes = scopeString !== null && (
-    !scopeString.includes('repo') ||
-    !scopeString.includes('read:org')
-  )
   const hasVisibleOrgs = orgAccess.memberOrgs.length > 0
 
-  if (!hasRestrictedOrgs && !missingScopes && hasVisibleOrgs) return null
+  if (!hasRestrictedOrgs && hasVisibleOrgs) return null
 
   let bannerText: JSX.Element
-  if (missingScopes) {
-    bannerText = (
-      <p className="org-access-banner-text">
-        <strong>Missing permissions:</strong> Your token is missing required scopes.
-        Check the Organizations tab to re-authorize.
-      </p>
-    )
-  } else if (hasRestrictedOrgs) {
+  if (hasRestrictedOrgs) {
     bannerText = (
       <p className="org-access-banner-text">
         <strong>{orgAccess.restrictedOrgs.length} organization{orgAccess.restrictedOrgs.length !== 1 ? 's need' : ' needs'} access approval.</strong>{' '}
