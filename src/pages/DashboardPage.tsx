@@ -56,31 +56,51 @@ function DashboardPage() {
         return
       }
 
-      const searchQuery = 'is:open is:pr review-requested:@me'
-      const response = await fetch(
-        `https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=100`,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/vnd.github.v3+json',
-          },
-        }
+      const queries = [
+        'is:open is:pr review-requested:@me',
+        'is:open is:pr assignee:@me',
+      ]
+
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github.v3+json',
+      }
+
+      const responses = await Promise.all(
+        queries.map(q =>
+          fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(q)}&per_page=100`, { headers })
+        )
       )
 
-      if (response.status === 401) {
-        localStorage.removeItem('github_access_token')
-        localStorage.removeItem('github_user')
-        navigate('/')
-        return
+      for (const resp of responses) {
+        if (resp.status === 401) {
+          localStorage.removeItem('github_access_token')
+          localStorage.removeItem('github_user')
+          navigate('/')
+          return
+        }
       }
 
-      const data = await response.json()
+      const results = await Promise.all(responses.map(r => r.json()))
 
-      if (data.message) {
-        throw new Error(data.message)
+      for (const data of results) {
+        if (data.message) {
+          throw new Error(data.message)
+        }
       }
 
-      const pullRequests: PullRequest[] = data.items.map((item: any) => ({
+      const seen = new Set<number>()
+      const allItems: any[] = []
+      for (const data of results) {
+        for (const item of data.items) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id)
+            allItems.push(item)
+          }
+        }
+      }
+
+      const pullRequests: PullRequest[] = allItems.map((item: any) => ({
         id: item.id,
         title: item.title,
         html_url: item.html_url,
