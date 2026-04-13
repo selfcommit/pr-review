@@ -36,25 +36,44 @@ export function useOrgAccess() {
         'Accept': 'application/vnd.github.v3+json',
       }
 
-      const orgsResponse = await fetch(
-        'https://api.github.com/user/orgs?per_page=100',
-        { headers }
-      )
+      const [orgsResponse, membershipsResponse] = await Promise.all([
+        fetch('https://api.github.com/user/orgs?per_page=100', { headers }),
+        fetch('https://api.github.com/user/memberships/orgs?state=active&per_page=100', { headers }),
+      ])
 
       const rawScopes = orgsResponse.headers.get('X-OAuth-Scopes')
+        || membershipsResponse.headers.get('X-OAuth-Scopes')
       const oauthScopes = rawScopes?.trim() || null
 
       const orgMap = new Map<string, OrgAccessInfo>()
 
+      if (membershipsResponse.ok) {
+        const memberships: Array<{
+          role: string
+          organization: { login: string; avatar_url: string }
+        }> = await membershipsResponse.json()
+        for (const m of memberships) {
+          orgMap.set(m.organization.login.toLowerCase(), {
+            login: m.organization.login,
+            avatar_url: m.organization.avatar_url,
+            role: m.role === 'admin' ? 'admin' : 'member',
+            accessible: false,
+          })
+        }
+      }
+
       if (orgsResponse.ok) {
         const orgs: Array<{ login: string; avatar_url: string }> = await orgsResponse.json()
         for (const org of orgs) {
-          orgMap.set(org.login.toLowerCase(), {
-            login: org.login,
-            avatar_url: org.avatar_url,
-            role: 'member',
-            accessible: false,
-          })
+          const key = org.login.toLowerCase()
+          if (!orgMap.has(key)) {
+            orgMap.set(key, {
+              login: org.login,
+              avatar_url: org.avatar_url,
+              role: 'member',
+              accessible: false,
+            })
+          }
         }
       }
 
