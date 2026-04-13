@@ -66,6 +66,7 @@ function DashboardPage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
   const [reauthorizing, setReauthorizing] = useState(false)
+  const [reauthorizeError, setReauthorizeError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const { orgAccess, checkOrgAccess } = useOrgAccess()
 
@@ -273,6 +274,7 @@ function DashboardPage() {
 
   const handleReauthorize = async () => {
     setReauthorizing(true)
+    setReauthorizeError(null)
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const origin = window.location.origin
@@ -287,12 +289,25 @@ function DashboardPage() {
         sessionStorage.setItem('github_oauth_state', data.state)
         if (data.client_id) localStorage.setItem('github_client_id', data.client_id)
         if (isInIframe()) {
-          window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
+          const popup = window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
+          if (!popup) {
+            setReauthorizeError('Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.')
+            setReauthorizing(false)
+          }
         } else {
           window.location.href = data.url
         }
+      } else {
+        const message = data.message || data.error || 'Failed to initiate re-authorization. Please try again.'
+        setReauthorizeError(message)
+        setReauthorizing(false)
       }
-    } catch {
+    } catch (err) {
+      setReauthorizeError(
+        err instanceof Error && err.message
+          ? `Could not reach the authentication service: ${err.message}`
+          : 'Could not reach the authentication service. Check your connection and try again.'
+      )
       setReauthorizing(false)
     }
   }
@@ -498,6 +513,7 @@ function DashboardPage() {
               orgAccess={orgAccess}
               onReauthorize={handleReauthorize}
               reauthorizing={reauthorizing}
+              reauthorizeError={reauthorizeError}
             />
           )}
 
