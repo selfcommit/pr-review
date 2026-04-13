@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
 import { isInIframe } from '../utils/iframe'
@@ -65,6 +65,25 @@ function DashboardPage() {
   const [reauthorizing, setReauthorizing] = useState(false)
   const { orgAccess, checkOrgAccess } = useOrgAccess()
 
+  const handleOAuthMessage = useCallback((event: MessageEvent) => {
+    if (event.origin !== window.location.origin) return
+    if (event.data?.type !== 'github-oauth-callback') return
+
+    const { access_token, user: userParam, state } = event.data
+    const savedState = sessionStorage.getItem('github_oauth_state')
+
+    if (access_token && state && state === savedState && userParam) {
+      localStorage.setItem('github_access_token', access_token)
+      localStorage.setItem('github_user', userParam)
+      sessionStorage.removeItem('github_oauth_state')
+      setUser(JSON.parse(userParam))
+      setReauthorizing(false)
+      fetchPullRequests()
+    } else {
+      setReauthorizing(false)
+    }
+  }, [])
+
   useEffect(() => {
     const userJson = localStorage.getItem('github_user')
     if (userJson) {
@@ -72,6 +91,11 @@ function DashboardPage() {
     }
     fetchPullRequests()
   }, [])
+
+  useEffect(() => {
+    window.addEventListener('message', handleOAuthMessage)
+    return () => window.removeEventListener('message', handleOAuthMessage)
+  }, [handleOAuthMessage])
 
   const fetchPullRequests = async () => {
     try {

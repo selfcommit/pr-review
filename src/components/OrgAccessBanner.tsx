@@ -13,7 +13,7 @@ function OrgAccessBanner({ orgAccess, onReauthorize, reauthorizing }: OrgAccessB
   if (dismissed || orgAccess.loading) return null
 
   const hasRestrictedOrgs = orgAccess.restrictedOrgs.length > 0
-  const scopeString = orgAccess.oauthScopes?.trim() || null
+  const scopeString = orgAccess.oauthScopes
   const missingScopes = scopeString !== null && (
     !scopeString.includes('repo') ||
     !scopeString.includes('read:org')

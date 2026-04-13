@@ -39,7 +39,8 @@ export function useOrgAccess() {
         { headers }
       )
 
-      const oauthScopes = orgsResponse.headers.get('X-OAuth-Scopes')
+      const rawScopes = orgsResponse.headers.get('X-OAuth-Scopes')
+      const oauthScopes = rawScopes?.trim() || null
 
       if (!orgsResponse.ok) {
         setResult(prev => ({
