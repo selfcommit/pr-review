@@ -8,13 +8,14 @@ function LandingPage() {
     setIsLoading(true)
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const redirectUri = `${window.location.origin}/auth/callback`
+      const origin = window.top ? window.top.location.origin : window.location.origin
+      const redirectUri = `${origin}/auth/callback`
       const response = await fetch(`${supabaseUrl}/functions/v1/github-auth/login?redirect_uri=${encodeURIComponent(redirectUri)}`)
       const data = await response.json()
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
-        window.location.href = data.url
+        window.top ? (window.top.location.href = data.url) : (window.location.href = data.url)
       }
     } catch (error) {
       console.error('Sign in error:', error)
