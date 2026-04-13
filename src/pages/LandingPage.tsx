@@ -3,9 +3,11 @@ import './LandingPage.css'
 
 function LandingPage() {
   const [isLoading, setIsLoading] = useState(false)
+  const [signInError, setSignInError] = useState<string | null>(null)
 
   const handleSignIn = async () => {
     setIsLoading(true)
+    setSignInError(null)
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
       const origin = window.location.origin
@@ -28,11 +30,18 @@ function LandingPage() {
         console.log('[handleSignIn] navigating to GitHub auth URL...')
         window.location.href = data.url
       } else {
-        console.error('[handleSignIn] no URL in response, cannot redirect')
+        const message = data.message || data.error || 'Failed to initiate sign-in. Please try again.'
+        console.error('[handleSignIn] no URL in response:', message)
+        setSignInError(message)
         setIsLoading(false)
       }
     } catch (error) {
       console.error('[handleSignIn] sign in error:', error)
+      setSignInError(
+        error instanceof Error && error.message
+          ? `Could not reach the authentication service: ${error.message}. Check your connection and try again.`
+          : 'Could not reach the authentication service. Check your connection and try again.'
+      )
       setIsLoading(false)
     }
   }
@@ -67,6 +76,15 @@ function LandingPage() {
               </>
             )}
           </button>
+
+          {signInError && (
+            <div className="signin-error">
+              <svg className="signin-error-icon" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              <span>{signInError}</span>
+            </div>
+          )}
         </div>
 
         <div className="features-section">
