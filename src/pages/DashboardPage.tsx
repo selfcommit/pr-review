@@ -272,7 +272,7 @@ function DashboardPage() {
     navigate('/')
   }
 
-  const handleReauthorize = async () => {
+  const initiateOAuthFlow = async () => {
     setReauthorizing(true)
     setReauthorizeError(null)
     try {
@@ -310,6 +310,17 @@ function DashboardPage() {
       )
       setReauthorizing(false)
     }
+  }
+
+  const handleReauthorize = () => {
+    initiateOAuthFlow()
+  }
+
+  const handleRevokeAndReconnect = () => {
+    localStorage.removeItem('github_access_token')
+    localStorage.removeItem('github_user')
+    localStorage.removeItem('github_client_id')
+    initiateOAuthFlow()
   }
 
   const formatDate = (dateString: string) => {
@@ -512,6 +523,7 @@ function DashboardPage() {
             <OrganizationsTab
               orgAccess={orgAccess}
               onReauthorize={handleReauthorize}
+              onRevokeAndReconnect={handleRevokeAndReconnect}
               reauthorizing={reauthorizing}
               reauthorizeError={reauthorizeError}
             />
