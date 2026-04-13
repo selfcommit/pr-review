@@ -8,16 +8,31 @@ function LandingPage() {
     setIsLoading(true)
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const redirectTo = encodeURIComponent(window.location.origin)
-      const response = await fetch(`${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`)
+      const origin = window.location.origin
+      console.log('[handleSignIn] window.location.origin:', origin)
+
+      const redirectTo = encodeURIComponent(origin)
+      const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
+      console.log('[handleSignIn] fetching login URL:', loginUrl)
+
+      const response = await fetch(loginUrl)
       const data = await response.json()
+      console.log('[handleSignIn] login response status:', response.status)
+      console.log('[handleSignIn] login response data.url:', data.url)
+      console.log('[handleSignIn] login response data.state:', data.state)
+      console.log('[handleSignIn] login response error:', data.error || '(none)')
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
+        console.log('[handleSignIn] stored state in sessionStorage:', data.state)
+        console.log('[handleSignIn] navigating to GitHub auth URL...')
         window.location.href = data.url
+      } else {
+        console.error('[handleSignIn] no URL in response, cannot redirect')
+        setIsLoading(false)
       }
     } catch (error) {
-      console.error('Sign in error:', error)
+      console.error('[handleSignIn] sign in error:', error)
       setIsLoading(false)
     }
   }

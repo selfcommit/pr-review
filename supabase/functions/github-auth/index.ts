@@ -26,16 +26,27 @@ Deno.serve(async (req: Request) => {
       const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
       const redirectUri = Deno.env.get("GITHUB_REDIRECT_URI") || `${supabaseUrl}/functions/v1/github-auth/callback`;
 
+      console.log("[login] SUPABASE_URL:", supabaseUrl);
+      console.log("[login] GITHUB_REDIRECT_URI env:", Deno.env.get("GITHUB_REDIRECT_URI") || "(not set, using default)");
+      console.log("[login] resolved redirectUri:", redirectUri);
+
       if (!redirectUri) {
         throw new Error("Could not determine redirect URI");
       }
 
       const redirectTo = url.searchParams.get("redirect_to") || "https://pr-review.com";
+      console.log("[login] redirect_to param (raw):", url.searchParams.get("redirect_to"));
+      console.log("[login] resolved redirectTo:", redirectTo);
+
       const nonce = crypto.randomUUID();
       const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
+      console.log("[login] statePayload (btoa):", statePayload);
+      console.log("[login] statePayload decoded back:", JSON.parse(atob(statePayload)));
+
       const scope = "read:user,read:org";
 
       const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scope)}&state=${encodeURIComponent(statePayload)}`;
+      console.log("[login] githubAuthUrl:", githubAuthUrl);
 
       return new Response(
         JSON.stringify({ url: githubAuthUrl, state: statePayload }),
@@ -50,18 +61,29 @@ Deno.serve(async (req: Request) => {
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
 
+      console.log("[callback] code present:", !!code);
+      console.log("[callback] state (raw from GitHub):", state);
+
       let appUrl = "https://pr-review.com";
       try {
         if (state) {
-          const parsed = JSON.parse(atob(state));
+          const decoded = atob(state);
+          console.log("[callback] state decoded (atob):", decoded);
+          const parsed = JSON.parse(decoded);
+          console.log("[callback] state parsed:", parsed);
           if (parsed.redirectTo) appUrl = parsed.redirectTo;
+        } else {
+          console.log("[callback] no state param received from GitHub");
         }
-      } catch {
-        // fall back to default
+      } catch (e) {
+        console.error("[callback] failed to parse state:", e);
       }
+
+      console.log("[callback] resolved appUrl:", appUrl);
 
       if (!code) {
         const errorUrl = `${appUrl}/#auth_error=${encodeURIComponent("No authorization code received")}`;
+        console.log("[callback] no code, redirecting to error:", errorUrl);
         return new Response(null, {
           status: 302,
           headers: { ...corsHeaders, Location: errorUrl },
@@ -93,9 +115,14 @@ Deno.serve(async (req: Request) => {
       });
 
       const tokenData = await tokenResponse.json();
+      console.log("[callback] token exchange response keys:", Object.keys(tokenData));
+      console.log("[callback] token exchange error:", tokenData.error || "(none)");
+      console.log("[callback] token exchange error_description:", tokenData.error_description || "(none)");
+      console.log("[callback] access_token present:", !!tokenData.access_token);
 
       if (tokenData.error) {
         const errorUrl = `${appUrl}/#auth_error=${encodeURIComponent(tokenData.error_description || tokenData.error)}`;
+        console.log("[callback] token error, redirecting to:", errorUrl);
         return new Response(null, {
           status: 302,
           headers: { ...corsHeaders, Location: errorUrl },
@@ -126,6 +153,8 @@ Deno.serve(async (req: Request) => {
       });
 
       const successUrl = `${appUrl}/#${params.toString()}`;
+      console.log("[callback] success redirect appUrl:", appUrl);
+      console.log("[callback] success redirect (without token):", `${appUrl}/#user=...&state=${state}`);
 
       return new Response(null, {
         status: 302,
