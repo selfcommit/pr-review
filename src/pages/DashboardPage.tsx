@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useOrgAccess } from '../hooks/useOrgAccess'
+import { isInIframe } from '../utils/iframe'
+import OrgAccessBanner from '../components/OrgAccessBanner'
 import './DashboardPage.css'
 
 interface PullRequest {
@@ -58,6 +61,9 @@ function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
+  const [debugOpen, setDebugOpen] = useState(false)
+  const [reauthorizing, setReauthorizing] = useState(false)
+  const { orgAccess, checkOrgAccess } = useOrgAccess()
 
   useEffect(() => {
     const userJson = localStorage.getItem('github_user')
@@ -212,6 +218,16 @@ function DashboardPage() {
       } else {
         setRecentlyReviewedPRs([])
       }
+
+      const allVisibleOrgs = new Set<string>()
+      pendingPRs.forEach(pr => allVisibleOrgs.add(pr.repository.full_name.split('/')[0]))
+      if (reviewedData.items) {
+        reviewedData.items.forEach((item: any) => {
+          const orgName = item.repository_url.split('/').slice(-2)[0]
+          allVisibleOrgs.add(orgName)
+        })
+      }
+      checkOrgAccess(Array.from(allVisibleOrgs))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch pull requests')
       console.error('Error fetching PRs:', err)
@@ -224,6 +240,31 @@ function DashboardPage() {
     localStorage.removeItem('github_access_token')
     localStorage.removeItem('github_user')
     navigate('/')
+  }
+
+  const handleReauthorize = async () => {
+    setReauthorizing(true)
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const origin = window.location.origin
+      const callbackPath = isInIframe() ? '/auth/callback' : ''
+      const redirectTo = encodeURIComponent(origin + callbackPath)
+      const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
+
+      const response = await fetch(loginUrl)
+      const data = await response.json()
+
+      if (data.url) {
+        sessionStorage.setItem('github_oauth_state', data.state)
+        if (isInIframe()) {
+          window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
+        } else {
+          window.location.href = data.url
+        }
+      }
+    } catch {
+      setReauthorizing(false)
+    }
   }
 
   const formatDate = (dateString: string) => {
@@ -341,6 +382,14 @@ function DashboardPage() {
             </button>
           </div>
 
+          {!loading && !error && (
+            <OrgAccessBanner
+              orgAccess={orgAccess}
+              onReauthorize={handleReauthorize}
+              reauthorizing={reauthorizing}
+            />
+          )}
+
           {loading ? (
             <div className="loading-state">
               <div className="spinner"></div>
@@ -388,24 +437,60 @@ function DashboardPage() {
 
           {debugInfo && (
             <div className="debug-panel">
-              <h3 className="debug-title">API Diagnostics</h3>
-              <div className="debug-meta">
-                <span>Fetched: {debugInfo.timestamp}</span>
-                <span>User: {debugInfo.username || '(unknown)'}</span>
-                <span>Token: {debugInfo.tokenPreview || '(none)'}</span>
-              </div>
-              {debugInfo.queries.map((q, i) => (
-                <div key={i} className="debug-query">
-                  <div className="debug-query-header">Query {i + 1}</div>
-                  <div className="debug-row"><span className="debug-label">Search</span><span className="debug-value">{q.query}</span></div>
-                  <div className="debug-row"><span className="debug-label">HTTP Status</span><span className="debug-value">{q.status}</span></div>
-                  <div className="debug-row"><span className="debug-label">Total Count</span><span className="debug-value">{q.totalCount ?? 'N/A'}</span></div>
-                  <div className="debug-row"><span className="debug-label">Items Returned</span><span className="debug-value">{q.itemsReturned ?? 'N/A'}</span></div>
-                  <div className="debug-row"><span className="debug-label">Message</span><span className="debug-value">{q.message || '(none)'}</span></div>
-                  <div className="debug-row"><span className="debug-label">Rate Limit Left</span><span className="debug-value">{q.rateLimitRemaining ?? 'N/A'}</span></div>
-                  <div className="debug-row"><span className="debug-label">Rate Reset</span><span className="debug-value">{q.rateLimitReset ? new Date(Number(q.rateLimitReset) * 1000).toLocaleTimeString() : 'N/A'}</span></div>
-                </div>
-              ))}
+              <button
+                className="debug-toggle"
+                onClick={() => setDebugOpen(prev => !prev)}
+              >
+                <h3 className="debug-title">API Diagnostics</h3>
+                <svg
+                  className={`debug-chevron ${debugOpen ? 'debug-chevron-open' : ''}`}
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  width="16"
+                  height="16"
+                >
+                  <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                </svg>
+              </button>
+              {debugOpen && (
+                <>
+                  <div className="debug-meta">
+                    <span>Fetched: {debugInfo.timestamp}</span>
+                    <span>User: {debugInfo.username || '(unknown)'}</span>
+                    <span>Token: {debugInfo.tokenPreview || '(none)'}</span>
+                    {orgAccess.oauthScopes && (
+                      <span>Scopes: {orgAccess.oauthScopes}</span>
+                    )}
+                  </div>
+
+                  {orgAccess.memberOrgs.length > 0 && (
+                    <div className="debug-query">
+                      <div className="debug-query-header">Organization Access</div>
+                      {orgAccess.memberOrgs.map(org => (
+                        <div key={org.login} className="debug-row">
+                          <span className="debug-label">{org.login}</span>
+                          <span className={`debug-value ${org.accessible ? 'debug-status-ok' : 'debug-status-restricted'}`}>
+                            {org.accessible ? 'Accessible' : 'Restricted'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {debugInfo.queries.map((q, i) => (
+                    <div key={i} className="debug-query">
+                      <div className="debug-query-header">Query {i + 1}</div>
+                      <div className="debug-row"><span className="debug-label">Search</span><span className="debug-value">{q.query}</span></div>
+                      <div className="debug-row"><span className="debug-label">HTTP Status</span><span className="debug-value">{q.status}</span></div>
+                      <div className="debug-row"><span className="debug-label">Total Count</span><span className="debug-value">{q.totalCount ?? 'N/A'}</span></div>
+                      <div className="debug-row"><span className="debug-label">Items Returned</span><span className="debug-value">{q.itemsReturned ?? 'N/A'}</span></div>
+                      <div className="debug-row"><span className="debug-label">Message</span><span className="debug-value">{q.message || '(none)'}</span></div>
+                      <div className="debug-row"><span className="debug-label">Rate Limit Left</span><span className="debug-value">{q.rateLimitRemaining ?? 'N/A'}</span></div>
+                      <div className="debug-row"><span className="debug-label">Rate Reset</span><span className="debug-value">{q.rateLimitReset ? new Date(Number(q.rateLimitReset) * 1000).toLocaleTimeString() : 'N/A'}</span></div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           )}
         </div>
