@@ -2,34 +2,12 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
+import { isOverdue } from '../utils/time'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
+import ReviewRequestedTab from '../components/ReviewRequestedTab'
+import AssignedTab from '../components/AssignedTab'
 import './DashboardPage.css'
-
-interface PullRequest {
-  id: number
-  title: string
-  html_url: string
-  created_at: string
-  updated_at: string
-  state: string
-  pull_request_merged: boolean
-  repository: {
-    name: string
-    full_name: string
-    html_url: string
-  }
-  user: {
-    login: string
-    avatar_url: string
-  }
-  draft: boolean
-}
-
-interface OrgPRs {
-  org: string
-  pullRequests: PullRequest[]
-}
 
 interface GitHubUser {
   login: string
@@ -55,18 +33,21 @@ interface DebugInfo {
 }
 
 type TabId = 'pull-requests' | 'organizations'
+type PRSubTab = 'review-requested' | 'assigned'
 
 function DashboardPage() {
   const navigate = useNavigate()
   const [user, setUser] = useState<GitHubUser | null>(null)
-  const [orgPRs, setOrgPRs] = useState<OrgPRs[]>([])
-  const [recentlyReviewedPRs, setRecentlyReviewedPRs] = useState<OrgPRs[]>([])
+  const [reviewRequestedItems, setReviewRequestedItems] = useState<Array<Record<string, unknown>>>([])
+  const [reviewedItems, setReviewedItems] = useState<Array<Record<string, unknown>>>([])
+  const [reviewTimestamps, setReviewTimestamps] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
   const [refreshingOrgs, setRefreshingOrgs] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
+  const [prSubTab, setPrSubTab] = useState<PRSubTab>('review-requested')
   const { orgAccess, fetchOrgs } = useOrgAccess()
 
   const handleOAuthMessage = useCallback((event: MessageEvent) => {
@@ -112,28 +93,26 @@ function DashboardPage() {
       }
 
       const data = await apiGet<{
-        pending: Array<{ items?: Array<Record<string, unknown>>; total_count?: number; message?: string }>
+        reviewRequested: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string }
         reviewed: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string }
+        reviewTimestamps: Record<number, string>
         username: string
         rateLimitRemaining: string | null
         rateLimitReset: string | null
         oauthScopes: string | null
       }>('pull-requests')
 
-      const pendingQueries = [
-        'is:open is:pr review-requested:@me',
-        'is:open is:pr assignee:@me',
+      const queries = [
+        { query: 'is:open is:pr review-requested:@me', result: data.reviewRequested },
+        { query: 'is:pr reviewed-by:@me sort:updated-desc', result: data.reviewed },
       ]
-      const reviewedQuery = 'is:pr reviewed-by:@me sort:updated-desc'
-      const allQueries = [...pendingQueries, reviewedQuery]
-      const allResults = [...data.pending, data.reviewed]
 
-      const queryDebugInfos: QueryDebugInfo[] = allResults.map((result, i) => ({
-        query: allQueries[i],
-        status: result.message ? 422 : 200,
-        totalCount: result.total_count ?? null,
-        itemsReturned: result.items ? result.items.length : null,
-        message: (result.message as string) || null,
+      const queryDebugInfos: QueryDebugInfo[] = queries.map((q, i) => ({
+        query: q.query,
+        status: q.result.message ? 422 : 200,
+        totalCount: q.result.total_count ?? null,
+        itemsReturned: q.result.items ? q.result.items.length : null,
+        message: (q.result.message as string) || null,
         rateLimitRemaining: i === 0 ? data.rateLimitRemaining : null,
         rateLimitReset: i === 0 ? data.rateLimitReset : null,
       }))
@@ -145,84 +124,15 @@ function DashboardPage() {
         oauthScopes: data.oauthScopes,
       })
 
-      for (const result of allResults) {
-        if (result.message && !result.items) {
-          throw new Error(result.message as string)
+      for (const q of queries) {
+        if (q.result.message && !q.result.items) {
+          throw new Error(q.result.message as string)
         }
       }
 
-      const seen = new Set<number>()
-      const pendingItems: Array<Record<string, unknown>> = []
-      for (const result of data.pending) {
-        if (!result.items) continue
-        for (const item of result.items) {
-          const itemId = item.id as number
-          if (!seen.has(itemId)) {
-            seen.add(itemId)
-            pendingItems.push(item)
-          }
-        }
-      }
-
-      const mapItem = (item: Record<string, unknown>): PullRequest => {
-        const repoUrl = item.repository_url as string
-        const htmlUrl = item.html_url as string
-        const itemUser = item.user as { login: string; avatar_url: string }
-        const pr = item.pull_request as { merged_at?: string } | undefined
-        return {
-          id: item.id as number,
-          title: item.title as string,
-          html_url: htmlUrl,
-          created_at: item.created_at as string,
-          updated_at: item.updated_at as string,
-          state: item.state as string,
-          pull_request_merged: pr?.merged_at != null,
-          repository: {
-            name: repoUrl.split('/').pop()!,
-            full_name: repoUrl.split('/').slice(-2).join('/'),
-            html_url: htmlUrl.split('/pull/')[0],
-          },
-          user: {
-            login: itemUser.login,
-            avatar_url: itemUser.avatar_url,
-          },
-          draft: (item.draft as boolean) || false,
-        }
-      }
-
-      const groupByOrg = (prs: PullRequest[]): OrgPRs[] => {
-        const grouped = prs.reduce((acc, pr) => {
-          const org = pr.repository.full_name.split('/')[0]
-          const existing = acc.find(g => g.org === org)
-          if (existing) {
-            existing.pullRequests.push(pr)
-          } else {
-            acc.push({ org, pullRequests: [pr] })
-          }
-          return acc
-        }, [] as OrgPRs[])
-        grouped.sort((a, b) => a.org.localeCompare(b.org))
-        grouped.forEach(g => {
-          g.pullRequests.sort((a, b) =>
-            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-          )
-        })
-        return grouped
-      }
-
-      const pendingPRs = pendingItems.map(mapItem)
-      setOrgPRs(groupByOrg(pendingPRs))
-
-      if (data.reviewed.items) {
-        const pendingIds = new Set(pendingItems.map((it) => it.id as number))
-        const reviewedItems = data.reviewed.items.filter(
-          (item) => !pendingIds.has(item.id as number)
-        )
-        const reviewedPRs = reviewedItems.map(mapItem)
-        setRecentlyReviewedPRs(groupByOrg(reviewedPRs))
-      } else {
-        setRecentlyReviewedPRs([])
-      }
+      setReviewRequestedItems(data.reviewRequested.items || [])
+      setReviewedItems(data.reviewed.items || [])
+      setReviewTimestamps(data.reviewTimestamps || {})
     } catch (err) {
       if (err instanceof Error && err.message === 'Session expired') {
         return
@@ -244,73 +154,11 @@ function DashboardPage() {
     setRefreshingOrgs(false)
   }
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffDays === 0) return 'Today'
-    if (diffDays === 1) return 'Yesterday'
-    if (diffDays < 7) return `${diffDays} days ago`
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
-    return date.toLocaleDateString()
-  }
-
-  const getPrStateBadge = (pr: PullRequest) => {
-    if (pr.pull_request_merged) return { label: 'Merged', className: 'state-badge state-merged' }
-    if (pr.state === 'closed') return { label: 'Closed', className: 'state-badge state-closed' }
-    return { label: 'Open', className: 'state-badge state-open' }
-  }
-
-  const totalPRs = orgPRs.reduce((sum, org) => sum + org.pullRequests.length, 0)
-  const totalReviewed = recentlyReviewedPRs.reduce((sum, org) => sum + org.pullRequests.length, 0)
-
-  const renderPRCard = (pr: PullRequest, showState: boolean) => (
-    <a
-      key={pr.id}
-      href={pr.html_url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="pr-card"
-    >
-      <div className="pr-header">
-        <div className="pr-repo">
-          <svg className="repo-icon" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/>
-          </svg>
-          {pr.repository.name}
-        </div>
-        <div className="pr-badges">
-          {pr.draft && <span className="draft-badge">Draft</span>}
-          {showState && (() => {
-            const badge = getPrStateBadge(pr)
-            return <span className={badge.className}>{badge.label}</span>
-          })()}
-        </div>
-      </div>
-      <h3 className="pr-title">{pr.title}</h3>
-      <div className="pr-footer">
-        <div className="pr-author">
-          <img src={pr.user.avatar_url} alt={pr.user.login} className="author-avatar" />
-          <span className="author-name">{pr.user.login}</span>
-        </div>
-        <span className="pr-date">{formatDate(pr.updated_at)}</span>
-      </div>
-    </a>
-  )
-
-  const renderOrgSection = (orgData: OrgPRs, showState: boolean) => (
-    <div key={orgData.org} className="org-section">
-      <div className="org-header">
-        <h2 className="org-name">{orgData.org}</h2>
-        <span className="org-count">{orgData.pullRequests.length} PR{orgData.pullRequests.length !== 1 ? 's' : ''}</span>
-      </div>
-      <div className="prs-list">
-        {orgData.pullRequests.map((pr) => renderPRCard(pr, showState))}
-      </div>
-    </div>
-  )
+  const totalReviewRequested = reviewRequestedItems.length
+  const overdueCount = reviewRequestedItems.reduce((count, item) => {
+    const ts = reviewTimestamps[item.id as number]
+    return ts && isOverdue(ts) ? count + 1 : count
+  }, 0)
 
   return (
     <div className="dashboard-container">
@@ -340,13 +188,15 @@ function DashboardPage() {
         <div className="dashboard-content">
           <div className="stats-section">
             <div className="stat-card">
-              <div className="stat-value">{totalPRs}</div>
-              <div className="stat-label">Pending Reviews</div>
+              <div className="stat-value">{totalReviewRequested}</div>
+              <div className="stat-label">Review Requests</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-value stat-value-teal">{totalReviewed}</div>
-              <div className="stat-label">Recently Reviewed</div>
-            </div>
+            {overdueCount > 0 && (
+              <div className="stat-card stat-card-overdue">
+                <div className="stat-value stat-value-amber">{overdueCount}</div>
+                <div className="stat-label">Overdue (24h+)</div>
+              </div>
+            )}
             <div className="stat-card">
               <div className="stat-value">{orgAccess.memberOrgs.length}</div>
               <div className="stat-label">Organizations</div>
@@ -382,57 +232,56 @@ function DashboardPage() {
 
           {activeTab === 'pull-requests' && (
             <>
-              {!loading && !error && (
-                <OrgAccessBanner
-                  orgAccess={orgAccess}
-                  onSwitchToOrgsTab={() => setActiveTab('organizations')}
-                />
-              )}
+              <div className="sub-tab-bar">
+                <button
+                  className={`sub-tab-button ${prSubTab === 'review-requested' ? 'sub-tab-button-active' : ''}`}
+                  onClick={() => setPrSubTab('review-requested')}
+                >
+                  Review Requested
+                  {totalReviewRequested > 0 && (
+                    <span className="sub-tab-count">{totalReviewRequested}</span>
+                  )}
+                </button>
+                <button
+                  className={`sub-tab-button ${prSubTab === 'assigned' ? 'sub-tab-button-active' : ''}`}
+                  onClick={() => setPrSubTab('assigned')}
+                >
+                  Assigned to Me
+                </button>
+              </div>
 
-              {loading ? (
-                <div className="loading-state">
-                  <div className="spinner"></div>
-                  <p>Loading pull requests...</p>
-                </div>
-              ) : error ? (
-                <div className="error-state">
-                  <p className="error-message">{error}</p>
-                  <button onClick={fetchPullRequests} className="retry-button">
-                    Try Again
-                  </button>
-                </div>
-              ) : (
+              {prSubTab === 'review-requested' && (
                 <>
-                  {orgPRs.length === 0 ? (
-                    <div className="empty-state">
-                      <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
-                      </svg>
-                      <h2>No pending reviews</h2>
-                      <p>You're all caught up! No pull requests are waiting for your review.</p>
-                    </div>
-                  ) : (
-                    <div className="section-block">
-                      <h2 className="section-title">Pending Reviews</h2>
-                      <div className="orgs-container">
-                        {orgPRs.map((orgData) => renderOrgSection(orgData, false))}
-                      </div>
-                    </div>
+                  {!loading && !error && (
+                    <OrgAccessBanner
+                      orgAccess={orgAccess}
+                      onSwitchToOrgsTab={() => setActiveTab('organizations')}
+                    />
                   )}
 
-                  <div className="section-block section-reviewed">
-                    <h2 className="section-title section-title-teal">Recently Reviewed</h2>
-                    {recentlyReviewedPRs.length === 0 ? (
-                      <p className="section-empty-message">No recently reviewed PRs found.</p>
-                    ) : (
-                      <div className="orgs-container">
-                        {recentlyReviewedPRs.map((orgData) => renderOrgSection(orgData, true))}
-                      </div>
-                    )}
-                  </div>
+                  {loading ? (
+                    <div className="loading-state">
+                      <div className="spinner"></div>
+                      <p>Loading pull requests...</p>
+                    </div>
+                  ) : error ? (
+                    <div className="error-state">
+                      <p className="error-message">{error}</p>
+                      <button onClick={fetchPullRequests} className="retry-button">
+                        Try Again
+                      </button>
+                    </div>
+                  ) : (
+                    <ReviewRequestedTab
+                      reviewRequestedItems={reviewRequestedItems}
+                      reviewedItems={reviewedItems}
+                      reviewTimestamps={reviewTimestamps}
+                    />
+                  )}
                 </>
               )}
+
+              {prSubTab === 'assigned' && <AssignedTab />}
             </>
           )}
 

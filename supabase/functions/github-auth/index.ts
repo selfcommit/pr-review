@@ -144,6 +144,131 @@ async function syncUserAndOrgs(
   return sessionToken;
 }
 
+async function fetchReviewRequestedAt(
+  accessToken: string,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  targetLogin: string
+): Promise<string | null> {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/vnd.github.v3+json",
+  };
+
+  let latestTimestamp: string | null = null;
+  let page = 1;
+  const perPage = 100;
+
+  while (page <= 5) {
+    const resp = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/timeline?per_page=${perPage}&page=${page}`,
+      { headers }
+    );
+
+    if (!resp.ok) {
+      console.error(
+        `[fetchTimeline] Failed for ${owner}/${repo}#${prNumber}: ${resp.status}`
+      );
+      break;
+    }
+
+    const events = await resp.json();
+    if (!Array.isArray(events) || events.length === 0) break;
+
+    for (const event of events) {
+      if (event.event !== "review_requested") continue;
+      const reviewer = event.requested_reviewer;
+      if (
+        reviewer &&
+        reviewer.login?.toLowerCase() === targetLogin.toLowerCase()
+      ) {
+        latestTimestamp = event.created_at;
+      }
+    }
+
+    if (events.length < perPage) break;
+    page++;
+  }
+
+  return latestTimestamp;
+}
+
+async function resolveReviewTimestamps(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  accessToken: string,
+  login: string,
+  prItems: Array<{ id: number; number: number; repoFullName: string }>
+): Promise<Record<number, string>> {
+  const timestamps: Record<number, string> = {};
+  if (prItems.length === 0) return timestamps;
+
+  const prIds = prItems.map((p) => p.id);
+  const { data: cached } = await supabase
+    .from("review_requests")
+    .select("pr_id, review_requested_at")
+    .eq("github_user_id", githubUserId)
+    .in("pr_id", prIds);
+
+  if (cached) {
+    for (const row of cached) {
+      timestamps[row.pr_id] = row.review_requested_at;
+    }
+  }
+
+  const uncachedItems = prItems.filter((p) => !timestamps[p.id]);
+
+  const batchSize = 5;
+  for (let i = 0; i < uncachedItems.length; i += batchSize) {
+    const batch = uncachedItems.slice(i, i + batchSize);
+    const results = await Promise.all(
+      batch.map(async (item) => {
+        const [owner, repo] = item.repoFullName.split("/");
+        const ts = await fetchReviewRequestedAt(
+          accessToken,
+          owner,
+          repo,
+          item.number,
+          login
+        );
+        return { item, ts };
+      })
+    );
+
+    for (const { item, ts } of results) {
+      if (ts) {
+        timestamps[item.id] = ts;
+        await supabase.from("review_requests").upsert(
+          {
+            github_user_id: githubUserId,
+            pr_id: item.id,
+            pr_number: item.number,
+            repo_full_name: item.repoFullName,
+            review_requested_at: ts,
+          },
+          { onConflict: "github_user_id,pr_id" }
+        );
+      }
+    }
+  }
+
+  const currentPrIds = prItems.map((p) => p.id);
+  const { data: allCached } = await supabase
+    .from("review_requests")
+    .select("id, pr_id")
+    .eq("github_user_id", githubUserId);
+
+  if (allCached) {
+    const stale = allCached.filter((r: { pr_id: number }) => !currentPrIds.includes(r.pr_id));
+    for (const row of stale) {
+      await supabase.from("review_requests").delete().eq("id", row.id);
+    }
+  }
+
+  return timestamps;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -426,6 +551,94 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
+        .select("github_user_id, access_token, login")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      const ghHeaders = {
+        Authorization: `Bearer ${user.access_token}`,
+        Accept: "application/vnd.github.v3+json",
+      };
+
+      const reviewRequestedQuery = "is:open is:pr review-requested:@me";
+      const reviewedQuery = "is:pr reviewed-by:@me sort:updated-desc";
+
+      const [reviewReqResp, reviewedResp] = await Promise.all([
+        fetch(
+          `https://api.github.com/search/issues?q=${encodeURIComponent(reviewRequestedQuery)}&per_page=100`,
+          { headers: ghHeaders }
+        ),
+        fetch(
+          `https://api.github.com/search/issues?q=${encodeURIComponent(reviewedQuery)}&per_page=30`,
+          { headers: ghHeaders }
+        ),
+      ]);
+
+      if (reviewReqResp.status === 401 || reviewedResp.status === 401) {
+        return jsonResponse(
+          { error: "GitHub token expired", code: "token_expired" },
+          401
+        );
+      }
+
+      const [reviewReqResult, reviewedResult] = await Promise.all([
+        reviewReqResp.json(),
+        reviewedResp.json(),
+      ]);
+
+      const rateLimitRemaining =
+        reviewReqResp.headers.get("X-RateLimit-Remaining") || null;
+      const rateLimitReset =
+        reviewReqResp.headers.get("X-RateLimit-Reset") || null;
+      const oauthScopes =
+        reviewReqResp.headers.get("X-OAuth-Scopes") || null;
+
+      let reviewTimestamps: Record<number, string> = {};
+
+      if (reviewReqResult.items && Array.isArray(reviewReqResult.items)) {
+        const prItems = reviewReqResult.items.map(
+          (item: { id: number; number: number; repository_url: string }) => ({
+            id: item.id,
+            number: item.number,
+            repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+          })
+        );
+
+        reviewTimestamps = await resolveReviewTimestamps(
+          supabase,
+          user.github_user_id,
+          user.access_token,
+          user.login,
+          prItems
+        );
+      }
+
+      return jsonResponse({
+        reviewRequested: reviewReqResult,
+        reviewed: reviewedResult,
+        reviewTimestamps,
+        username: user.login,
+        rateLimitRemaining,
+        rateLimitReset,
+        oauthScopes,
+      });
+    }
+
+    if (path === "pull-requests-assigned") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
         .select("access_token, login")
         .eq("session_token", sessionToken)
         .maybeSingle();
@@ -434,52 +647,35 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ error: "Invalid session" }, 401);
       }
 
-      const headers = {
+      const ghHeaders = {
         Authorization: `Bearer ${user.access_token}`,
         Accept: "application/vnd.github.v3+json",
       };
 
-      const pendingQueries = [
-        "is:open is:pr review-requested:@me",
-        "is:open is:pr assignee:@me",
-      ];
-      const reviewedQuery = "is:pr reviewed-by:@me sort:updated-desc";
-      const allQueries = [...pendingQueries, reviewedQuery];
-
-      const responses = await Promise.all(
-        allQueries.map((q) =>
-          fetch(
-            `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&per_page=${q === reviewedQuery ? "30" : "100"}`,
-            { headers }
-          )
-        )
+      const assignedQuery = "is:open is:pr assignee:@me";
+      const resp = await fetch(
+        `https://api.github.com/search/issues?q=${encodeURIComponent(assignedQuery)}&per_page=100`,
+        { headers: ghHeaders }
       );
 
-      for (const resp of responses) {
-        if (resp.status === 401) {
-          return jsonResponse(
-            { error: "GitHub token expired", code: "token_expired" },
-            401
-          );
-        }
+      if (resp.status === 401) {
+        return jsonResponse(
+          { error: "GitHub token expired", code: "token_expired" },
+          401
+        );
       }
 
-      const results = await Promise.all(responses.map((r) => r.json()));
-
+      const result = await resp.json();
       const rateLimitRemaining =
-        responses[0]?.headers.get("X-RateLimit-Remaining") || null;
+        resp.headers.get("X-RateLimit-Remaining") || null;
       const rateLimitReset =
-        responses[0]?.headers.get("X-RateLimit-Reset") || null;
-      const oauthScopes =
-        responses[0]?.headers.get("X-OAuth-Scopes") || null;
+        resp.headers.get("X-RateLimit-Reset") || null;
 
       return jsonResponse({
-        pending: results.slice(0, 2),
-        reviewed: results[2],
+        assigned: result,
         username: user.login,
         rateLimitRemaining,
         rateLimitReset,
-        oauthScopes,
       });
     }
 
