@@ -36,86 +36,11 @@ function getSupabaseAdmin() {
   );
 }
 
-let cachedAppSlug: string | null = null;
-
-async function getAppSlug(): Promise<string | null> {
-  if (cachedAppSlug) return cachedAppSlug;
-
-  const appId = Deno.env.get("GITHUB_APP_ID");
-  const privateKey = Deno.env.get("GITHUB_APP_PRIVATE_KEY");
-
-  if (!appId || !privateKey) {
-    console.error("[getAppSlug] Missing env: GITHUB_APP_ID =", !!appId, "GITHUB_APP_PRIVATE_KEY =", !!privateKey);
-    return null;
-  }
-
-  try {
-    const normalizedKey = privateKey.replace(/\\n/g, "\n");
-    const pemContents = normalizedKey
-      .replace(/-----BEGIN (RSA )?PRIVATE KEY-----/, "")
-      .replace(/-----END (RSA )?PRIVATE KEY-----/, "")
-      .replace(/\s/g, "");
-    const binaryDer = Uint8Array.from(atob(pemContents), (c) =>
-      c.charCodeAt(0)
-    );
-
-    const key = await crypto.subtle.importKey(
-      "pkcs8",
-      binaryDer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-
-    const now = Math.floor(Date.now() / 1000);
-    const header = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" }))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-    const payload = btoa(
-      JSON.stringify({ iat: now - 60, exp: now + 300, iss: appId })
-    )
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-
-    const data = new TextEncoder().encode(`${header}.${payload}`);
-    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, data);
-    const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-
-    const jwt = `${header}.${payload}.${sig}`;
-
-    const resp = await fetch("https://api.github.com/app", {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: "application/vnd.github.v3+json",
-        "User-Agent": "github-review-dashboard",
-      },
-    });
-
-    if (resp.ok) {
-      const appData = await resp.json();
-      cachedAppSlug = appData.slug || null;
-      return cachedAppSlug;
-    }
-
-    console.error("[getAppSlug] GitHub API responded with:", resp.status, await resp.text());
-  } catch (err) {
-    console.error("[getAppSlug] Error:", err);
-  }
-
-  return null;
-}
-
 interface OrgInfo {
   login: string;
   id: number | null;
   avatar_url: string;
   role: string;
-  accessible: boolean;
 }
 
 async function fetchUserOrgs(accessToken: string): Promise<OrgInfo[]> {
@@ -124,82 +49,31 @@ async function fetchUserOrgs(accessToken: string): Promise<OrgInfo[]> {
     Accept: "application/vnd.github.v3+json",
   };
 
-  const installedOrgKeys = new Set<string>();
-  const orgMap = new Map<string, OrgInfo>();
-
-  const installationsResp = await fetch(
-    "https://api.github.com/user/installations?per_page=100",
-    { headers }
-  );
-
-  if (installationsResp.ok) {
-    const installationsData = await installationsResp.json();
-    const installations = installationsData.installations || [];
-    console.log(
-      `[fetchUserOrgs] Found ${installations.length} app installation(s)`
-    );
-
-    for (const inst of installations) {
-      const account = inst.account;
-      if (!account) continue;
-
-      if (account.type === "Organization") {
-        const key = account.login.toLowerCase();
-        installedOrgKeys.add(key);
-        orgMap.set(key, {
-          login: account.login,
-          id: account.id ?? null,
-          avatar_url: account.avatar_url,
-          role:
-            inst.permissions?.administration === "write" ? "admin" : "member",
-          accessible: true,
-        });
-      }
-    }
-  } else {
-    console.error(
-      "[fetchUserOrgs] installations fetch failed:",
-      installationsResp.status,
-      await installationsResp.text()
-    );
-  }
-
   const orgsResp = await fetch(
     "https://api.github.com/user/orgs?per_page=100",
     { headers }
   );
 
-  if (orgsResp.ok) {
-    const userOrgs = await orgsResp.json();
-    console.log(
-      `[fetchUserOrgs] Found ${userOrgs.length} org membership(s) via /user/orgs`
-    );
-    for (const org of userOrgs) {
-      const key = org.login.toLowerCase();
-      if (orgMap.has(key)) {
-        continue;
-      }
-      orgMap.set(key, {
-        login: org.login,
-        id: org.id ?? null,
-        avatar_url: org.avatar_url,
-        role: "member",
-        accessible: installedOrgKeys.has(key),
-      });
-    }
-  } else {
+  if (!orgsResp.ok) {
     console.error(
       "[fetchUserOrgs] /user/orgs fetch failed:",
       orgsResp.status,
       await orgsResp.text()
     );
+    return [];
   }
 
+  const userOrgs = await orgsResp.json();
   console.log(
-    `[fetchUserOrgs] Returning ${orgMap.size} org(s):`,
-    Array.from(orgMap.keys())
+    `[fetchUserOrgs] Found ${userOrgs.length} org membership(s)`
   );
-  return Array.from(orgMap.values());
+
+  return userOrgs.map((org: { login: string; id?: number; avatar_url: string }) => ({
+    login: org.login,
+    id: org.id ?? null,
+    avatar_url: org.avatar_url,
+    role: "member",
+  }));
 }
 
 async function syncUserAndOrgs(
@@ -243,7 +117,6 @@ async function syncUserAndOrgs(
         org_id: org.id,
         org_avatar_url: org.avatar_url,
         role: org.role,
-        accessible: org.accessible,
         last_synced_at: new Date().toISOString(),
       },
       { onConflict: "github_user_id,org_login" }
@@ -297,7 +170,8 @@ Deno.serve(async (req: Request) => {
       const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
 
       const redirectUri = `${Deno.env.get("SUPABASE_URL")}/functions/v1/github-auth/callback`;
-      const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}`;
+      const scope = "repo read:org";
+      const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}&scope=${encodeURIComponent(scope)}`;
 
       return jsonResponse({
         url: authUrl,
@@ -309,8 +183,6 @@ Deno.serve(async (req: Request) => {
     if (path === "callback") {
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
-      const installationId = url.searchParams.get("installation_id");
-      const setupAction = url.searchParams.get("setup_action");
       const githubError = url.searchParams.get("error");
       const githubErrorDescription = url.searchParams.get("error_description");
 
@@ -341,16 +213,6 @@ Deno.serve(async (req: Request) => {
             : `GitHub error: ${githubError}`;
         }
         return redirectResponse(buildErrorUrl(appUrl, githubError, msg));
-      }
-
-      if (setupAction === "install" && !code) {
-        return redirectResponse(
-          buildErrorUrl(
-            appUrl,
-            "install_only",
-            "The app was installed but authorization was not completed. Please enable 'Request user authorization (OAuth) during installation' in the GitHub App settings, then sign in again."
-          )
-        );
       }
 
       if (!code) {
@@ -430,36 +292,6 @@ Deno.serve(async (req: Request) => {
             `Failed to retrieve profile: ${userData.message}`
           )
         );
-      }
-
-      if (installationId) {
-        const supabase = getSupabaseAdmin();
-        const instHeaders = {
-          Authorization: `Bearer ${tokenData.access_token}`,
-          Accept: "application/vnd.github.v3+json",
-        };
-        const instResp = await fetch(
-          `https://api.github.com/user/installations?per_page=100`,
-          { headers: instHeaders }
-        );
-        if (instResp.ok) {
-          const instData = await instResp.json();
-          const matchingInst = (instData.installations || []).find(
-            (i: { id: number }) => i.id === Number(installationId)
-          );
-          if (matchingInst?.account?.type === "Organization") {
-            await supabase.from("installations").upsert(
-              {
-                id: Number(installationId),
-                organization_name: matchingInst.account.login,
-                organization_id: matchingInst.account.id,
-                organization_avatar_url: matchingInst.account.avatar_url,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: "id" }
-            );
-          }
-        }
       }
 
       const orgs = await fetchUserOrgs(tokenData.access_token);
@@ -542,7 +374,6 @@ Deno.serve(async (req: Request) => {
               org_id: org.id,
               org_avatar_url: org.avatar_url,
               role: org.role,
-              accessible: org.accessible,
               last_synced_at: new Date().toISOString(),
             },
             { onConflict: "github_user_id,org_login" }
@@ -567,34 +398,14 @@ Deno.serve(async (req: Request) => {
       const { data: orgs } = await supabase
         .from("user_orgs")
         .select(
-          "org_login, org_id, org_avatar_url, role, accessible, last_synced_at"
+          "org_login, org_id, org_avatar_url, role, last_synced_at"
         )
         .eq("github_user_id", user.github_user_id)
         .order("org_login");
 
-      const slug = await getAppSlug();
-      const installUrl = slug
-        ? `https://github.com/apps/${slug}/installations/new`
-        : null;
-
       return jsonResponse({
         orgs: orgs || [],
-        install_url: installUrl,
       });
-    }
-
-    if (path === "app-info") {
-      const slug = await getAppSlug();
-      if (slug) {
-        return jsonResponse({
-          install_url: `https://github.com/apps/${slug}/installations/new`,
-          slug,
-        });
-      }
-      return jsonResponse(
-        { error: "Could not determine app slug" },
-        500
-      );
     }
 
     if (path === "pull-requests") {
