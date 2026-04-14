@@ -51,6 +51,7 @@ interface DebugInfo {
   timestamp: string
   username: string | null
   queries: QueryDebugInfo[]
+  oauthScopes: string | null
 }
 
 type TabId = 'pull-requests' | 'organizations'
@@ -116,6 +117,7 @@ function DashboardPage() {
         username: string
         rateLimitRemaining: string | null
         rateLimitReset: string | null
+        oauthScopes: string | null
       }>('pull-requests')
 
       const pendingQueries = [
@@ -140,6 +142,7 @@ function DashboardPage() {
         timestamp: new Date().toISOString(),
         username: data.username,
         queries: queryDebugInfos,
+        oauthScopes: data.oauthScopes,
       })
 
       for (const result of allResults) {
@@ -463,6 +466,8 @@ function DashboardPage() {
                   <div className="debug-meta">
                     <span>Fetched: {debugInfo.timestamp}</span>
                     <span>User: {debugInfo.username || '(unknown)'}</span>
+                    <span>OAuth Scopes: {debugInfo.oauthScopes || '(none)'}</span>
+                    <span>Stored Scopes: {orgAccess.oauthScopes || '(none)'}</span>
                   </div>
 
                   {orgAccess.memberOrgs.length > 0 && (

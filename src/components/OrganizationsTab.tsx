@@ -69,9 +69,34 @@ function OrganizationsTab({ orgAccess, onRefreshOrgs, refreshing }: Organization
           </svg>
           <h2>No organizations found</h2>
           <p>
-            You don't appear to belong to any GitHub organizations.
-            If you recently joined one, try refreshing below.
+            GitHub did not return any organizations for your account. This is usually caused by one of the following:
           </p>
+          <div className="orgs-tab-troubleshoot">
+            <div className="orgs-tab-troubleshoot-item">
+              <strong>1. OAuth scopes missing</strong>
+              <span>
+                Your token needs <code>read:org</code> scope. Current scopes: <code>{orgAccess.oauthScopes || '(none)'}</code>.
+                {!orgAccess.oauthScopes?.includes('read:org') && (
+                  <> Sign out and sign back in to get a token with the correct scopes.</>
+                )}
+              </span>
+            </div>
+            <div className="orgs-tab-troubleshoot-item">
+              <strong>2. Organization has OAuth app restrictions</strong>
+              <span>
+                Many organizations restrict third-party OAuth app access by default. An org admin must approve this app before it can see that organization. Ask your org admin to visit: <code>github.com/orgs/YOUR_ORG/policies/applications</code>
+              </span>
+            </div>
+            <div className="orgs-tab-troubleshoot-item">
+              <strong>3. You haven't granted access for a specific org</strong>
+              <span>
+                When signing in, GitHub may ask you to grant access per-organization. You can manage this at{' '}
+                <a href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer">
+                  github.com/settings/applications
+                </a>.
+              </span>
+            </div>
+          </div>
         </div>
       )}
 

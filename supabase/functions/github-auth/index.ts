@@ -83,6 +83,7 @@ async function syncUserAndOrgs(
   avatarUrl: string | null,
   email: string | null,
   accessToken: string,
+  oauthScopes: string | null,
   orgs: OrgInfo[]
 ) {
   const supabase = getSupabaseAdmin();
@@ -103,6 +104,7 @@ async function syncUserAndOrgs(
       avatar_url: avatarUrl,
       email,
       access_token: accessToken,
+      oauth_scopes: oauthScopes,
       session_token: sessionToken,
       updated_at: new Date().toISOString(),
     },
@@ -294,6 +296,9 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      const grantedScopes = tokenData.scope || null;
+      console.log(`[callback] Token scopes granted: ${grantedScopes || "(none)"}`);
+
       const orgs = await fetchUserOrgs(tokenData.access_token);
 
       const sessionToken = await syncUserAndOrgs(
@@ -303,6 +308,7 @@ Deno.serve(async (req: Request) => {
         userData.avatar_url,
         userData.email,
         tokenData.access_token,
+        grantedScopes,
         orgs
       );
 
@@ -355,7 +361,7 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
-        .select("github_user_id, access_token")
+        .select("github_user_id, access_token, oauth_scopes")
         .eq("session_token", sessionToken)
         .maybeSingle();
 
@@ -405,6 +411,7 @@ Deno.serve(async (req: Request) => {
 
       return jsonResponse({
         orgs: orgs || [],
+        oauthScopes: user.oauth_scopes || null,
       });
     }
 
@@ -463,6 +470,8 @@ Deno.serve(async (req: Request) => {
         responses[0]?.headers.get("X-RateLimit-Remaining") || null;
       const rateLimitReset =
         responses[0]?.headers.get("X-RateLimit-Reset") || null;
+      const oauthScopes =
+        responses[0]?.headers.get("X-OAuth-Scopes") || null;
 
       return jsonResponse({
         pending: results.slice(0, 2),
@@ -470,6 +479,7 @@ Deno.serve(async (req: Request) => {
         username: user.login,
         rateLimitRemaining,
         rateLimitReset,
+        oauthScopes,
       });
     }
 

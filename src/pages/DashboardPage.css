@@ -572,6 +572,55 @@
   margin-bottom: 24px;
 }
 
+.orgs-tab-troubleshoot {
+  text-align: left;
+  max-width: 600px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.orgs-tab-troubleshoot-item {
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orgs-tab-troubleshoot-item strong {
+  color: #e2e8f0;
+  font-size: 14px;
+}
+
+.orgs-tab-troubleshoot-item span {
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.orgs-tab-troubleshoot-item code {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(71, 85, 105, 0.4);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 12px;
+  color: #93c5fd;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+.orgs-tab-troubleshoot-item a {
+  color: #60a5fa;
+  text-decoration: none;
+}
+
+.orgs-tab-troubleshoot-item a:hover {
+  text-decoration: underline;
+}
+
 .orgs-tab-section {
   background: rgba(30, 41, 59, 0.3);
   border: 1px solid rgba(71, 85, 105, 0.3);

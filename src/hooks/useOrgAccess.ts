@@ -11,6 +11,7 @@ export interface OrgAccessResult {
   memberOrgs: OrgAccessInfo[]
   loading: boolean
   error: string | null
+  oauthScopes: string | null
 }
 
 interface OrgApiResponse {
@@ -19,6 +20,7 @@ interface OrgApiResponse {
     org_avatar_url: string | null
     role: string
   }>
+  oauthScopes: string | null
 }
 
 export function useOrgAccess() {
@@ -26,6 +28,7 @@ export function useOrgAccess() {
     memberOrgs: [],
     loading: false,
     error: null,
+    oauthScopes: null,
   })
 
   const fetchOrgs = useCallback(async (refresh = false) => {
@@ -45,6 +48,7 @@ export function useOrgAccess() {
         memberOrgs,
         loading: false,
         error: null,
+        oauthScopes: data.oauthScopes || null,
       })
     } catch (err) {
       setResult(prev => ({
