@@ -564,7 +564,7 @@ Deno.serve(async (req: Request) => {
         Accept: "application/vnd.github.v3+json",
       };
 
-      const reviewRequestedQuery = "is:open is:pr review-requested:@me";
+      const reviewRequestedQuery = "is:open is:pr user-review-requested:@me";
       const reviewedQuery = "is:pr reviewed-by:@me sort:updated-desc";
 
       const [reviewReqResp, reviewedResp] = await Promise.all([

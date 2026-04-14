@@ -103,7 +103,7 @@ function DashboardPage() {
       }>('pull-requests')
 
       const queries = [
-        { query: 'is:open is:pr review-requested:@me', result: data.reviewRequested },
+        { query: 'is:open is:pr user-review-requested:@me', result: data.reviewRequested },
         { query: 'is:pr reviewed-by:@me sort:updated-desc', result: data.reviewed },
       ]
 
