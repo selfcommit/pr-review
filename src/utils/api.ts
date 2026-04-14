@@ -77,8 +77,17 @@ export async function logout(): Promise<void> {
   try {
     await apiPost('logout');
   } catch {
-    // Ignore errors during logout
   }
   clearSession();
+}
+
+export async function getLoginUrl(redirectTo: string): Promise<{ url: string; state: string } | null> {
+  const loginUrl = `${AUTH_BASE}/login?redirect_to=${encodeURIComponent(redirectTo)}`;
+  const response = await fetch(loginUrl);
+  const data = await response.json();
+  if (data.url && data.state) {
+    return { url: data.url, state: data.state };
+  }
+  return null;
 }
 

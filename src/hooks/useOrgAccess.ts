@@ -12,7 +12,9 @@ export interface OrgAccessResult {
   memberOrgs: OrgAccessInfo[]
   restrictedOrgs: string[]
   installUrl: string | null
+  needsReauth: boolean
   loading: boolean
+  error: string | null
 }
 
 interface OrgApiResponse {
@@ -23,6 +25,8 @@ interface OrgApiResponse {
     accessible: boolean
   }>
   install_url: string | null
+  needs_reauth?: boolean
+  oauth_scopes?: string | null
 }
 
 export function useOrgAccess() {
@@ -30,11 +34,13 @@ export function useOrgAccess() {
     memberOrgs: [],
     restrictedOrgs: [],
     installUrl: null,
+    needsReauth: false,
     loading: false,
+    error: null,
   })
 
   const fetchOrgs = useCallback(async (refresh = false) => {
-    setResult(prev => ({ ...prev, loading: true }))
+    setResult(prev => ({ ...prev, loading: true, error: null }))
 
     try {
       const path = refresh ? 'orgs?refresh=true' : 'orgs'
@@ -55,10 +61,16 @@ export function useOrgAccess() {
         memberOrgs,
         restrictedOrgs,
         installUrl: data.install_url || null,
+        needsReauth: data.needs_reauth || false,
         loading: false,
+        error: null,
       })
-    } catch {
-      setResult(prev => ({ ...prev, loading: false }))
+    } catch (err) {
+      setResult(prev => ({
+        ...prev,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to fetch organizations',
+      }))
     }
   }, [])
 

@@ -895,6 +895,62 @@
   cursor: not-allowed;
 }
 
+.orgs-tab-reauth-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 20px;
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.25);
+  border-radius: 12px;
+}
+
+.orgs-tab-reauth-banner-icon {
+  color: #eab308;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.orgs-tab-reauth-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+}
+
+.orgs-tab-reauth-banner-text {
+  color: #e2e8f0;
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.orgs-tab-reauth-banner-text strong {
+  color: #fbbf24;
+}
+
+.orgs-tab-reauth-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
+  color: #1e1b4b;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.orgs-tab-reauth-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(234, 179, 8, 0.35);
+}
+
 .orgs-tab-reauth-error {
   display: flex;
   align-items: flex-start;
@@ -1254,6 +1310,15 @@
   }
 
   .orgs-tab-manage-btn {
+    justify-content: center;
+  }
+
+  .orgs-tab-reauth-banner {
+    flex-direction: column;
+  }
+
+  .orgs-tab-reauth-btn {
+    align-self: stretch;
     justify-content: center;
   }
 }

@@ -124,17 +124,20 @@ async function fetchUserOrgs(accessToken: string): Promise<OrgInfo[]> {
     Accept: "application/vnd.github.v3+json",
   };
 
+  const installedOrgKeys = new Set<string>();
+  const orgMap = new Map<string, OrgInfo>();
+
   const installationsResp = await fetch(
     "https://api.github.com/user/installations?per_page=100",
     { headers }
   );
 
-  const installedOrgKeys = new Set<string>();
-  const orgMap = new Map<string, OrgInfo>();
-
   if (installationsResp.ok) {
     const installationsData = await installationsResp.json();
     const installations = installationsData.installations || [];
+    console.log(
+      `[fetchUserOrgs] Found ${installations.length} app installation(s)`
+    );
 
     for (const inst of installations) {
       const account = inst.account;
@@ -168,20 +171,34 @@ async function fetchUserOrgs(accessToken: string): Promise<OrgInfo[]> {
 
   if (orgsResp.ok) {
     const userOrgs = await orgsResp.json();
+    console.log(
+      `[fetchUserOrgs] Found ${userOrgs.length} org membership(s) via /user/orgs`
+    );
     for (const org of userOrgs) {
       const key = org.login.toLowerCase();
-      if (!orgMap.has(key)) {
-        orgMap.set(key, {
-          login: org.login,
-          id: org.id ?? null,
-          avatar_url: org.avatar_url,
-          role: "member",
-          accessible: false,
-        });
+      if (orgMap.has(key)) {
+        continue;
       }
+      orgMap.set(key, {
+        login: org.login,
+        id: org.id ?? null,
+        avatar_url: org.avatar_url,
+        role: "member",
+        accessible: installedOrgKeys.has(key),
+      });
     }
+  } else {
+    console.error(
+      "[fetchUserOrgs] /user/orgs fetch failed:",
+      orgsResp.status,
+      await orgsResp.text()
+    );
   }
 
+  console.log(
+    `[fetchUserOrgs] Returning ${orgMap.size} org(s):`,
+    Array.from(orgMap.keys())
+  );
   return Array.from(orgMap.values());
 }
 
@@ -192,6 +209,7 @@ async function syncUserAndOrgs(
   avatarUrl: string | null,
   email: string | null,
   accessToken: string,
+  oauthScopes: string | null,
   orgs: OrgInfo[]
 ) {
   const supabase = getSupabaseAdmin();
@@ -212,6 +230,7 @@ async function syncUserAndOrgs(
       avatar_url: avatarUrl,
       email,
       access_token: accessToken,
+      oauth_scopes: oauthScopes,
       session_token: sessionToken,
       updated_at: new Date().toISOString(),
     },
@@ -279,15 +298,8 @@ Deno.serve(async (req: Request) => {
       const nonce = crypto.randomUUID();
       const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
 
-      const slug = await getAppSlug();
-
-      let authUrl: string;
-      if (slug) {
-        authUrl = `https://github.com/apps/${slug}/installations/new?state=${encodeURIComponent(statePayload)}`;
-      } else {
-        const redirectUri = `${Deno.env.get("SUPABASE_URL")}/functions/v1/github-auth/callback`;
-        authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}&scope=read:org,repo`;
-      }
+      const redirectUri = `${Deno.env.get("SUPABASE_URL")}/functions/v1/github-auth/callback`;
+      const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}&scope=read:org,repo`;
 
       return jsonResponse({
         url: authUrl,
@@ -383,6 +395,8 @@ Deno.serve(async (req: Request) => {
       );
 
       const tokenData = await tokenResponse.json();
+      const oauthScopes: string | null = tokenData.scope || null;
+      console.log("[callback] OAuth scopes granted:", oauthScopes);
 
       if (tokenData.error) {
         let msg: string;
@@ -461,6 +475,7 @@ Deno.serve(async (req: Request) => {
         userData.avatar_url,
         userData.email,
         tokenData.access_token,
+        oauthScopes,
         orgs
       );
 
@@ -513,13 +528,16 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
-        .select("github_user_id, access_token")
+        .select("github_user_id, access_token, oauth_scopes")
         .eq("session_token", sessionToken)
         .maybeSingle();
 
       if (!user) {
         return jsonResponse({ error: "Invalid session" }, 401);
       }
+
+      const scopes = (user.oauth_scopes || "").split(",").map((s: string) => s.trim());
+      const hasReadOrg = scopes.includes("read:org");
 
       const refresh = url.searchParams.get("refresh") === "true";
       if (refresh) {
@@ -567,7 +585,12 @@ Deno.serve(async (req: Request) => {
         ? `https://github.com/apps/${slug}/installations/new`
         : null;
 
-      return jsonResponse({ orgs: orgs || [], install_url: installUrl });
+      return jsonResponse({
+        orgs: orgs || [],
+        install_url: installUrl,
+        needs_reauth: !hasReadOrg,
+        oauth_scopes: user.oauth_scopes,
+      });
     }
 
     if (path === "app-info") {
