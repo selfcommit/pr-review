@@ -11,6 +11,7 @@ export interface OrgAccessInfo {
 export interface OrgAccessResult {
   memberOrgs: OrgAccessInfo[]
   restrictedOrgs: string[]
+  installUrl: string | null
   loading: boolean
 }
 
@@ -21,12 +22,14 @@ interface OrgApiResponse {
     role: string
     accessible: boolean
   }>
+  install_url: string | null
 }
 
 export function useOrgAccess() {
   const [result, setResult] = useState<OrgAccessResult>({
     memberOrgs: [],
     restrictedOrgs: [],
+    installUrl: null,
     loading: false,
   })
 
@@ -51,6 +54,7 @@ export function useOrgAccess() {
       setResult({
         memberOrgs,
         restrictedOrgs,
+        installUrl: data.install_url || null,
         loading: false,
       })
     } catch {

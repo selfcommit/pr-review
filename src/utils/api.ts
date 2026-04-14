@@ -73,17 +73,6 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return data;
 }
 
-export async function validateSession(): Promise<boolean> {
-  const token = getSessionToken();
-  if (!token) return false;
-  try {
-    await apiGet('session');
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function logout(): Promise<void> {
   try {
     await apiPost('logout');
@@ -93,12 +82,3 @@ export async function logout(): Promise<void> {
   clearSession();
 }
 
-export async function fetchAppInstallUrl(): Promise<string | null> {
-  try {
-    const resp = await fetch(`${AUTH_BASE}/app-info`);
-    const data = await resp.json();
-    return data.install_url || null;
-  } catch {
-    return null;
-  }
-}

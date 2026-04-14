@@ -36,6 +36,73 @@ function getSupabaseAdmin() {
   );
 }
 
+let cachedAppSlug: string | null = null;
+
+async function getAppSlug(): Promise<string | null> {
+  if (cachedAppSlug) return cachedAppSlug;
+
+  const appId = Deno.env.get("GITHUB_APP_ID");
+  const privateKey = Deno.env.get("GITHUB_APP_PRIVATE_KEY");
+
+  if (!appId || !privateKey) return null;
+
+  try {
+    const pemContents = privateKey
+      .replace(/-----BEGIN RSA PRIVATE KEY-----/, "")
+      .replace(/-----END RSA PRIVATE KEY-----/, "")
+      .replace(/\s/g, "");
+    const binaryDer = Uint8Array.from(atob(pemContents), (c) =>
+      c.charCodeAt(0)
+    );
+
+    const key = await crypto.subtle.importKey(
+      "pkcs8",
+      binaryDer,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+
+    const now = Math.floor(Date.now() / 1000);
+    const header = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" }))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+    const payload = btoa(
+      JSON.stringify({ iat: now - 60, exp: now + 300, iss: appId })
+    )
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    const data = new TextEncoder().encode(`${header}.${payload}`);
+    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, data);
+    const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    const jwt = `${header}.${payload}.${sig}`;
+
+    const resp = await fetch("https://api.github.com/app", {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+
+    if (resp.ok) {
+      const appData = await resp.json();
+      cachedAppSlug = appData.slug || null;
+      return cachedAppSlug;
+    }
+  } catch (err) {
+    console.error("[getAppSlug] Error:", err);
+  }
+
+  return null;
+}
+
 interface OrgInfo {
   login: string;
   id: number | null;
@@ -44,7 +111,7 @@ interface OrgInfo {
   accessible: boolean;
 }
 
-async function fetchUserInstallations(accessToken: string): Promise<OrgInfo[]> {
+async function fetchUserOrgs(accessToken: string): Promise<OrgInfo[]> {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     Accept: "application/vnd.github.v3+json",
@@ -55,46 +122,36 @@ async function fetchUserInstallations(accessToken: string): Promise<OrgInfo[]> {
     { headers }
   );
 
-  if (!installationsResp.ok) {
+  const installedOrgKeys = new Set<string>();
+  const orgMap = new Map<string, OrgInfo>();
+
+  if (installationsResp.ok) {
+    const installationsData = await installationsResp.json();
+    const installations = installationsData.installations || [];
+
+    for (const inst of installations) {
+      const account = inst.account;
+      if (!account) continue;
+
+      if (account.type === "Organization") {
+        const key = account.login.toLowerCase();
+        installedOrgKeys.add(key);
+        orgMap.set(key, {
+          login: account.login,
+          id: account.id ?? null,
+          avatar_url: account.avatar_url,
+          role:
+            inst.permissions?.administration === "write" ? "admin" : "member",
+          accessible: true,
+        });
+      }
+    }
+  } else {
     console.error(
-      "[fetchUserInstallations] Failed:",
+      "[fetchUserOrgs] installations fetch failed:",
       installationsResp.status,
       await installationsResp.text()
     );
-    return [];
-  }
-
-  const installationsData = await installationsResp.json();
-  const installations = installationsData.installations || [];
-
-  const supabase = getSupabaseAdmin();
-  const { data: allInstallations } = await supabase
-    .from("installations")
-    .select("id, organization_name, organization_id, organization_avatar_url");
-
-  const installedOrgIds = new Set(
-    (allInstallations || []).map((i: { organization_id: number }) =>
-      i.organization_id
-    )
-  );
-
-  const orgMap = new Map<string, OrgInfo>();
-
-  for (const inst of installations) {
-    const account = inst.account;
-    if (!account) continue;
-
-    if (account.type === "Organization") {
-      const key = account.login.toLowerCase();
-      const isInstalled = installedOrgIds.has(account.id);
-      orgMap.set(key, {
-        login: account.login,
-        id: account.id ?? null,
-        avatar_url: account.avatar_url,
-        role: inst.permissions?.administration === "write" ? "admin" : "member",
-        accessible: isInstalled,
-      });
-    }
   }
 
   const orgsResp = await fetch(
@@ -107,13 +164,12 @@ async function fetchUserInstallations(accessToken: string): Promise<OrgInfo[]> {
     for (const org of userOrgs) {
       const key = org.login.toLowerCase();
       if (!orgMap.has(key)) {
-        const isInstalled = installedOrgIds.has(org.id);
         orgMap.set(key, {
           login: org.login,
           id: org.id ?? null,
           avatar_url: org.avatar_url,
           role: "member",
-          accessible: isInstalled,
+          accessible: false,
         });
       }
     }
@@ -189,68 +245,6 @@ async function syncUserAndOrgs(
   return sessionToken;
 }
 
-async function getAppSlug(): Promise<string | null> {
-  const appId = Deno.env.get("GITHUB_APP_ID");
-  const privateKey = Deno.env.get("GITHUB_APP_PRIVATE_KEY");
-
-  if (!appId || !privateKey) return null;
-
-  try {
-    const pemContents = privateKey
-      .replace(/-----BEGIN RSA PRIVATE KEY-----/, "")
-      .replace(/-----END RSA PRIVATE KEY-----/, "")
-      .replace(/\s/g, "");
-    const binaryDer = Uint8Array.from(atob(pemContents), (c) =>
-      c.charCodeAt(0)
-    );
-
-    const key = await crypto.subtle.importKey(
-      "pkcs8",
-      binaryDer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-
-    const now = Math.floor(Date.now() / 1000);
-    const header = btoa(JSON.stringify({ alg: "RS256", typ: "JWT" }))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-    const payload = btoa(
-      JSON.stringify({ iat: now - 60, exp: now + 300, iss: appId })
-    )
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-
-    const data = new TextEncoder().encode(`${header}.${payload}`);
-    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, data);
-    const sig = btoa(String.fromCharCode(...new Uint8Array(signature)))
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/, "");
-
-    const jwt = `${header}.${payload}.${sig}`;
-
-    const resp = await fetch("https://api.github.com/app", {
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        Accept: "application/vnd.github.v3+json",
-      },
-    });
-
-    if (resp.ok) {
-      const appData = await resp.json();
-      return appData.slug || null;
-    }
-  } catch (err) {
-    console.error("[getAppSlug] Error:", err);
-  }
-
-  return null;
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -272,21 +266,27 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-      const redirectUri =
-        Deno.env.get("GITHUB_REDIRECT_URI") ||
-        `${supabaseUrl}/functions/v1/github-auth/callback`;
-
       const redirectTo =
-        url.searchParams.get("redirect_to") || "https://pr-review.com";
+        url.searchParams.get("redirect_to") || Deno.env.get("APP_URL") || "https://pr-review.com";
 
       const nonce = crypto.randomUUID();
       const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
 
-      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}`;
+      const slug = await getAppSlug();
+      if (!slug) {
+        return jsonResponse(
+          {
+            error: "app_not_configured",
+            message: "GitHub App is not configured. Cannot determine app slug.",
+          },
+          500
+        );
+      }
+
+      const installUrl = `https://github.com/apps/${slug}/installations/new?state=${encodeURIComponent(statePayload)}`;
 
       return jsonResponse({
-        url: githubAuthUrl,
+        url: installUrl,
         state: statePayload,
         client_id: clientId,
       });
@@ -295,10 +295,12 @@ Deno.serve(async (req: Request) => {
     if (path === "callback") {
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
+      const installationId = url.searchParams.get("installation_id");
+      const setupAction = url.searchParams.get("setup_action");
       const githubError = url.searchParams.get("error");
       const githubErrorDescription = url.searchParams.get("error_description");
 
-      let appUrl = "https://pr-review.com";
+      let appUrl = Deno.env.get("APP_URL") || "https://pr-review.com";
 
       try {
         if (state) {
@@ -325,6 +327,16 @@ Deno.serve(async (req: Request) => {
             : `GitHub error: ${githubError}`;
         }
         return redirectResponse(buildErrorUrl(appUrl, githubError, msg));
+      }
+
+      if (setupAction === "install" && !code) {
+        return redirectResponse(
+          buildErrorUrl(
+            appUrl,
+            "install_only",
+            "The app was installed but authorization was not completed. Please enable 'Request user authorization (OAuth) during installation' in the GitHub App settings, then sign in again."
+          )
+        );
       }
 
       if (!code) {
@@ -406,7 +418,37 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const orgs = await fetchUserInstallations(tokenData.access_token);
+      if (installationId) {
+        const supabase = getSupabaseAdmin();
+        const instHeaders = {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          Accept: "application/vnd.github.v3+json",
+        };
+        const instResp = await fetch(
+          `https://api.github.com/user/installations?per_page=100`,
+          { headers: instHeaders }
+        );
+        if (instResp.ok) {
+          const instData = await instResp.json();
+          const matchingInst = (instData.installations || []).find(
+            (i: { id: number }) => i.id === Number(installationId)
+          );
+          if (matchingInst?.account?.type === "Organization") {
+            await supabase.from("installations").upsert(
+              {
+                id: Number(installationId),
+                organization_name: matchingInst.account.login,
+                organization_id: matchingInst.account.id,
+                organization_avatar_url: matchingInst.account.avatar_url,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: "id" }
+            );
+          }
+        }
+      }
+
+      const orgs = await fetchUserOrgs(tokenData.access_token);
 
       const sessionToken = await syncUserAndOrgs(
         userData.id,
@@ -477,7 +519,7 @@ Deno.serve(async (req: Request) => {
 
       const refresh = url.searchParams.get("refresh") === "true";
       if (refresh) {
-        const orgs = await fetchUserInstallations(user.access_token);
+        const orgs = await fetchUserOrgs(user.access_token);
         for (const org of orgs) {
           await supabase.from("user_orgs").upsert(
             {
@@ -516,14 +558,19 @@ Deno.serve(async (req: Request) => {
         .eq("github_user_id", user.github_user_id)
         .order("org_login");
 
-      return jsonResponse({ orgs: orgs || [] });
+      const slug = await getAppSlug();
+      const installUrl = slug
+        ? `https://github.com/apps/${slug}/installations/new`
+        : null;
+
+      return jsonResponse({ orgs: orgs || [], install_url: installUrl });
     }
 
     if (path === "app-info") {
       const slug = await getAppSlug();
       if (slug) {
         return jsonResponse({
-          install_url: `https://github.com/apps/${slug}/installations/select_target`,
+          install_url: `https://github.com/apps/${slug}/installations/new`,
           slug,
         });
       }

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
-import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken, fetchAppInstallUrl } from '../utils/api'
+import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import './DashboardPage.css'
@@ -65,7 +65,6 @@ function DashboardPage() {
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
   const [refreshingOrgs, setRefreshingOrgs] = useState(false)
-  const [installUrl, setInstallUrl] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const { orgAccess, fetchOrgs } = useOrgAccess()
 
@@ -94,7 +93,6 @@ function DashboardPage() {
     }
     fetchPullRequests()
     fetchOrgs()
-    fetchAppInstallUrl().then(setInstallUrl)
   }, [fetchOrgs])
 
   useEffect(() => {
@@ -388,7 +386,7 @@ function DashboardPage() {
               {!loading && !error && (
                 <OrgAccessBanner
                   orgAccess={orgAccess}
-                  installUrl={installUrl}
+                  installUrl={orgAccess.installUrl}
                   onSwitchToOrgsTab={() => setActiveTab('organizations')}
                 />
               )}
@@ -443,7 +441,7 @@ function DashboardPage() {
           {activeTab === 'organizations' && (
             <OrganizationsTab
               orgAccess={orgAccess}
-              installUrl={installUrl}
+              installUrl={orgAccess.installUrl}
               onRefreshOrgs={handleRefreshOrgs}
               refreshing={refreshingOrgs}
             />
