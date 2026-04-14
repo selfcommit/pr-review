@@ -44,12 +44,16 @@ async function getAppSlug(): Promise<string | null> {
   const appId = Deno.env.get("GITHUB_APP_ID");
   const privateKey = Deno.env.get("GITHUB_APP_PRIVATE_KEY");
 
-  if (!appId || !privateKey) return null;
+  if (!appId || !privateKey) {
+    console.error("[getAppSlug] Missing env: GITHUB_APP_ID =", !!appId, "GITHUB_APP_PRIVATE_KEY =", !!privateKey);
+    return null;
+  }
 
   try {
-    const pemContents = privateKey
-      .replace(/-----BEGIN RSA PRIVATE KEY-----/, "")
-      .replace(/-----END RSA PRIVATE KEY-----/, "")
+    const normalizedKey = privateKey.replace(/\\n/g, "\n");
+    const pemContents = normalizedKey
+      .replace(/-----BEGIN (RSA )?PRIVATE KEY-----/, "")
+      .replace(/-----END (RSA )?PRIVATE KEY-----/, "")
       .replace(/\s/g, "");
     const binaryDer = Uint8Array.from(atob(pemContents), (c) =>
       c.charCodeAt(0)
@@ -88,6 +92,7 @@ async function getAppSlug(): Promise<string | null> {
       headers: {
         Authorization: `Bearer ${jwt}`,
         Accept: "application/vnd.github.v3+json",
+        "User-Agent": "github-review-dashboard",
       },
     });
 
@@ -96,6 +101,8 @@ async function getAppSlug(): Promise<string | null> {
       cachedAppSlug = appData.slug || null;
       return cachedAppSlug;
     }
+
+    console.error("[getAppSlug] GitHub API responded with:", resp.status, await resp.text());
   } catch (err) {
     console.error("[getAppSlug] Error:", err);
   }
@@ -273,20 +280,17 @@ Deno.serve(async (req: Request) => {
       const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
 
       const slug = await getAppSlug();
-      if (!slug) {
-        return jsonResponse(
-          {
-            error: "app_not_configured",
-            message: "GitHub App is not configured. Cannot determine app slug.",
-          },
-          500
-        );
+
+      let authUrl: string;
+      if (slug) {
+        authUrl = `https://github.com/apps/${slug}/installations/new?state=${encodeURIComponent(statePayload)}`;
+      } else {
+        const redirectUri = `${Deno.env.get("SUPABASE_URL")}/functions/v1/github-auth/callback`;
+        authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}&scope=read:org,repo`;
       }
 
-      const installUrl = `https://github.com/apps/${slug}/installations/new?state=${encodeURIComponent(statePayload)}`;
-
       return jsonResponse({
-        url: installUrl,
+        url: authUrl,
         state: statePayload,
         client_id: clientId,
       });
