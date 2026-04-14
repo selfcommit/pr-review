@@ -209,7 +209,6 @@ async function syncUserAndOrgs(
   avatarUrl: string | null,
   email: string | null,
   accessToken: string,
-  oauthScopes: string | null,
   orgs: OrgInfo[]
 ) {
   const supabase = getSupabaseAdmin();
@@ -230,7 +229,6 @@ async function syncUserAndOrgs(
       avatar_url: avatarUrl,
       email,
       access_token: accessToken,
-      oauth_scopes: oauthScopes,
       session_token: sessionToken,
       updated_at: new Date().toISOString(),
     },
@@ -299,7 +297,7 @@ Deno.serve(async (req: Request) => {
       const statePayload = btoa(JSON.stringify({ nonce, redirectTo }));
 
       const redirectUri = `${Deno.env.get("SUPABASE_URL")}/functions/v1/github-auth/callback`;
-      const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}&scope=read:org,repo`;
+      const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${encodeURIComponent(statePayload)}`;
 
       return jsonResponse({
         url: authUrl,
@@ -395,8 +393,6 @@ Deno.serve(async (req: Request) => {
       );
 
       const tokenData = await tokenResponse.json();
-      const oauthScopes: string | null = tokenData.scope || null;
-      console.log("[callback] OAuth scopes granted:", oauthScopes);
 
       if (tokenData.error) {
         let msg: string;
@@ -475,7 +471,6 @@ Deno.serve(async (req: Request) => {
         userData.avatar_url,
         userData.email,
         tokenData.access_token,
-        oauthScopes,
         orgs
       );
 
@@ -528,16 +523,13 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
-        .select("github_user_id, access_token, oauth_scopes")
+        .select("github_user_id, access_token")
         .eq("session_token", sessionToken)
         .maybeSingle();
 
       if (!user) {
         return jsonResponse({ error: "Invalid session" }, 401);
       }
-
-      const scopes = (user.oauth_scopes || "").split(",").map((s: string) => s.trim());
-      const hasReadOrg = scopes.includes("read:org");
 
       const refresh = url.searchParams.get("refresh") === "true";
       if (refresh) {
@@ -588,8 +580,6 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({
         orgs: orgs || [],
         install_url: installUrl,
-        needs_reauth: !hasReadOrg,
-        oauth_scopes: user.oauth_scopes,
       });
     }
 

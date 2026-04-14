@@ -12,7 +12,6 @@ export interface OrgAccessResult {
   memberOrgs: OrgAccessInfo[]
   restrictedOrgs: string[]
   installUrl: string | null
-  needsReauth: boolean
   loading: boolean
   error: string | null
 }
@@ -25,8 +24,6 @@ interface OrgApiResponse {
     accessible: boolean
   }>
   install_url: string | null
-  needs_reauth?: boolean
-  oauth_scopes?: string | null
 }
 
 export function useOrgAccess() {
@@ -34,7 +31,6 @@ export function useOrgAccess() {
     memberOrgs: [],
     restrictedOrgs: [],
     installUrl: null,
-    needsReauth: false,
     loading: false,
     error: null,
   })
@@ -61,7 +57,6 @@ export function useOrgAccess() {
         memberOrgs,
         restrictedOrgs,
         installUrl: data.install_url || null,
-        needsReauth: data.needs_reauth || false,
         loading: false,
         error: null,
       })

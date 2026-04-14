@@ -1,8 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
-import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken, getLoginUrl } from '../utils/api'
-import { isInIframe } from '../utils/iframe'
+import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import './DashboardPage.css'
@@ -242,25 +241,6 @@ function DashboardPage() {
     setRefreshingOrgs(false)
   }
 
-  const handleReauth = async () => {
-    try {
-      const origin = window.location.origin
-      const callbackPath = isInIframe() ? '/auth/callback' : ''
-      const redirectTo = origin + callbackPath
-      const loginData = await getLoginUrl(redirectTo)
-      if (!loginData) return
-
-      sessionStorage.setItem('github_oauth_state', loginData.state)
-
-      if (isInIframe()) {
-        window.open(loginData.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
-      } else {
-        window.location.href = loginData.url
-      }
-    } catch {
-    }
-  }
-
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     const now = new Date()
@@ -463,7 +443,6 @@ function DashboardPage() {
               orgAccess={orgAccess}
               installUrl={orgAccess.installUrl}
               onRefreshOrgs={handleRefreshOrgs}
-              onReauth={handleReauth}
               refreshing={refreshingOrgs}
             />
           )}
