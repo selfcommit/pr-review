@@ -375,25 +375,18 @@
   font-size: 15px;
   font-weight: 600;
   color: #e2e8f0;
-  margin-bottom: 6px;
+  margin-bottom: 0;
   line-height: 1.4;
 }
 
-.pr-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.pr-author {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.pr-header-separator {
+  color: #475569;
+  font-size: 12px;
 }
 
 .author-avatar {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
 }
 
@@ -1452,12 +1445,6 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
-  }
-
-  .pr-footer {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
   }
 
   .debug-meta {
