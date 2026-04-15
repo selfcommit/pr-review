@@ -5,6 +5,7 @@ interface PRCardProps {
   pr: PullRequest
   showState: boolean
   showWaitTime?: boolean
+  highlighted?: boolean
 }
 
 function getPrStateBadge(pr: PullRequest) {
@@ -13,7 +14,7 @@ function getPrStateBadge(pr: PullRequest) {
   return { label: 'Open', className: 'state-badge state-open' }
 }
 
-function PRCard({ pr, showState, showWaitTime }: PRCardProps) {
+function PRCard({ pr, showState, showWaitTime, highlighted }: PRCardProps) {
   const urgency = pr.review_requested_at ? getUrgencyLevel(pr.review_requested_at) : null
 
   return (
@@ -21,7 +22,8 @@ function PRCard({ pr, showState, showWaitTime }: PRCardProps) {
       href={pr.html_url}
       target="_blank"
       rel="noopener noreferrer"
-      className="pr-card"
+      className={`pr-card ${highlighted ? 'pr-card-highlighted' : ''}`}
+      id={`pr-${pr.id}`}
     >
       <div className="pr-header">
         <div className="pr-repo">

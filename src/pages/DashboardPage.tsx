@@ -1,13 +1,17 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
 import { usePolling } from '../hooks/usePolling'
+import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
 import { isOverdue } from '../utils/time'
+import { playChime } from '../utils/notificationSound'
+import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import ReviewRequestedTab from '../components/ReviewRequestedTab'
 import AssignedTab from '../components/AssignedTab'
+import NotificationToast from '../components/NotificationToast'
 import './DashboardPage.css'
 
 interface GitHubUser {
@@ -33,6 +37,11 @@ interface DebugInfo {
   oauthScopes: string | null
 }
 
+interface ToastMessage {
+  prId: number
+  text: string
+}
+
 type TabId = 'pull-requests' | 'organizations'
 type PRSubTab = 'review-requested' | 'assigned'
 
@@ -50,6 +59,38 @@ function DashboardPage() {
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const [prSubTab, setPrSubTab] = useState<PRSubTab>('review-requested')
   const { orgAccess, fetchOrgs } = useOrgAccess()
+  const { soundEnabled, setSoundEnabled } = useNotificationPreference()
+
+  const [highlightedPRIds, setHighlightedPRIds] = useState<Set<number>>(new Set())
+  const [toastMessages, setToastMessages] = useState<ToastMessage[] | null>(null)
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const reviewTimestampsRef = useRef(reviewTimestamps)
+  reviewTimestampsRef.current = reviewTimestamps
+
+  const reviewRequestedItemsRef = useRef(reviewRequestedItems)
+  reviewRequestedItemsRef.current = reviewRequestedItems
+
+  const soundEnabledRef = useRef(soundEnabled)
+  soundEnabledRef.current = soundEnabled
+
+  const scrollToPR = useCallback((prId: number) => {
+    const el = document.getElementById(`pr-${prId}`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [])
+
+  const triggerHighlight = useCallback((prIds: number[]) => {
+    if (prIds.length === 0) return
+    setHighlightedPRIds(new Set(prIds))
+
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+    highlightTimerRef.current = setTimeout(() => {
+      setHighlightedPRIds(new Set())
+      highlightTimerRef.current = null
+    }, 2500)
+  }, [])
 
   const handlePollChanges = useCallback((result: {
     updatedPRs: Array<Record<string, unknown>>
@@ -57,6 +98,33 @@ function DashboardPage() {
     newPRs: Array<Record<string, unknown>>
     reviewTimestamps: Record<number, string>
   }) => {
+    const notifyPrIds: number[] = []
+    const messages: ToastMessage[] = []
+
+    if (result.newPRs.length > 0) {
+      for (const raw of result.newPRs) {
+        const pr = mapItem(raw)
+        notifyPrIds.push(pr.id)
+        messages.push({ prId: pr.id, text: `${pr.repository.full_name}: ${pr.title}` })
+      }
+    }
+
+    const currentTimestamps = reviewTimestampsRef.current
+    const currentItems = reviewRequestedItemsRef.current
+
+    for (const item of currentItems) {
+      const prId = item.id as number
+      const oldTs = currentTimestamps[prId]
+      if (!oldTs) continue
+      if (isOverdue(oldTs)) continue
+      const newTs = result.reviewTimestamps[prId] || oldTs
+      if (isOverdue(newTs) && !notifyPrIds.includes(prId)) {
+        const pr = mapItem(item)
+        notifyPrIds.push(prId)
+        messages.push({ prId, text: `${pr.repository.full_name}: ${pr.title} (now 24h+)` })
+      }
+    }
+
     if (result.newPRs.length > 0) {
       setReviewRequestedItems(prev => [...result.newPRs, ...prev])
     }
@@ -78,7 +146,16 @@ function DashboardPage() {
     if (Object.keys(result.reviewTimestamps).length > 0) {
       setReviewTimestamps(prev => ({ ...prev, ...result.reviewTimestamps }))
     }
-  }, [])
+
+    if (notifyPrIds.length > 0) {
+      if (soundEnabledRef.current) {
+        playChime()
+      }
+      triggerHighlight(notifyPrIds)
+      setToastMessages(messages)
+      setTimeout(() => scrollToPR(notifyPrIds[0]), 100)
+    }
+  }, [triggerHighlight, scrollToPR])
 
   const pollingEnabled = !loading && !error && activeTab === 'pull-requests' && prSubTab === 'review-requested' && !!getSessionToken()
 
@@ -198,6 +275,15 @@ function DashboardPage() {
     setRefreshingOrgs(false)
   }
 
+  const handleToastClickPR = useCallback((prId: number) => {
+    triggerHighlight([prId])
+    scrollToPR(prId)
+  }, [triggerHighlight, scrollToPR])
+
+  const handleToastDismiss = useCallback(() => {
+    setToastMessages(null)
+  }, [])
+
   const totalReviewRequested = reviewRequestedItems.length
   const overdueCount = reviewRequestedItems.reduce((count, item) => {
     const ts = reviewTimestamps[item.id as number]
@@ -227,6 +313,14 @@ function DashboardPage() {
           </div>
         </div>
       </header>
+
+      {toastMessages && toastMessages.length > 0 && (
+        <NotificationToast
+          messages={toastMessages}
+          onDismiss={handleToastDismiss}
+          onClickPR={handleToastClickPR}
+        />
+      )}
 
       <main className="dashboard-main">
         <div className="dashboard-content">
@@ -320,6 +414,9 @@ function DashboardPage() {
                       reviewRequestedItems={reviewRequestedItems}
                       reviewedItems={reviewedItems}
                       reviewTimestamps={reviewTimestamps}
+                      soundEnabled={soundEnabled}
+                      onSoundToggle={setSoundEnabled}
+                      highlightedPRIds={highlightedPRIds}
                     />
                   )}
                 </>

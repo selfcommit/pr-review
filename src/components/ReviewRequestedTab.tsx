@@ -43,9 +43,19 @@ interface ReviewRequestedTabProps {
   reviewRequestedItems: Array<Record<string, unknown>>
   reviewedItems: Array<Record<string, unknown>>
   reviewTimestamps: Record<number, string>
+  soundEnabled: boolean
+  onSoundToggle: (value: boolean) => void
+  highlightedPRIds: Set<number>
 }
 
-function ReviewRequestedTab({ reviewRequestedItems, reviewedItems, reviewTimestamps }: ReviewRequestedTabProps) {
+function ReviewRequestedTab({
+  reviewRequestedItems,
+  reviewedItems,
+  reviewTimestamps,
+  soundEnabled,
+  onSoundToggle,
+  highlightedPRIds,
+}: ReviewRequestedTabProps) {
   const [showDrafts, setShowDrafts] = useState(false)
 
   const allReviewPRs = reviewRequestedItems.map(item => {
@@ -70,6 +80,18 @@ function ReviewRequestedTab({ reviewRequestedItems, reviewedItems, reviewTimesta
   return (
     <>
       <div className="drafts-toggle-bar">
+        <label className="drafts-toggle">
+          <span className="drafts-toggle-label">Notification Sound</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={soundEnabled}
+            className={`toggle-switch ${soundEnabled ? 'toggle-switch-on' : ''}`}
+            onClick={() => onSoundToggle(!soundEnabled)}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </label>
         <label className="drafts-toggle">
           <span className="drafts-toggle-label">Show Drafts</span>
           <button
@@ -125,7 +147,13 @@ function ReviewRequestedTab({ reviewRequestedItems, reviewedItems, reviewTimesta
               </div>
               <div className="prs-list">
                 {group.prs.map(pr => (
-                  <PRCard key={pr.id} pr={pr} showState={false} showWaitTime />
+                  <PRCard
+                    key={pr.id}
+                    pr={pr}
+                    showState={false}
+                    showWaitTime
+                    highlighted={highlightedPRIds.has(pr.id)}
+                  />
                 ))}
               </div>
             </div>
