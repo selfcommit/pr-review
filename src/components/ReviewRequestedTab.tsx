@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { PullRequest } from '../types/pullRequest'
 import { groupByOrg, mapItem } from '../types/pullRequest'
 import { isOverdue } from '../utils/time'
@@ -45,12 +46,16 @@ interface ReviewRequestedTabProps {
 }
 
 function ReviewRequestedTab({ reviewRequestedItems, reviewedItems, reviewTimestamps }: ReviewRequestedTabProps) {
-  const reviewPRs = reviewRequestedItems.map(item => {
+  const [showDrafts, setShowDrafts] = useState(false)
+
+  const allReviewPRs = reviewRequestedItems.map(item => {
     const pr = mapItem(item)
     const ts = reviewTimestamps[pr.id]
     if (ts) pr.review_requested_at = ts
     return pr
   })
+
+  const reviewPRs = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
 
   const urgencyGroups = groupByUrgency(reviewPRs)
   const overdueCount = urgencyGroups.find(g => g.label === 'overdue')?.prs.length || 0
@@ -64,6 +69,21 @@ function ReviewRequestedTab({ reviewRequestedItems, reviewedItems, reviewTimesta
 
   return (
     <>
+      <div className="drafts-toggle-bar">
+        <label className="drafts-toggle">
+          <span className="drafts-toggle-label">Show Drafts</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showDrafts}
+            className={`toggle-switch ${showDrafts ? 'toggle-switch-on' : ''}`}
+            onClick={() => setShowDrafts(prev => !prev)}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </label>
+      </div>
+
       {reviewPRs.length === 0 ? (
         <div className="empty-state">
           <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
