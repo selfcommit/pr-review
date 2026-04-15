@@ -295,11 +295,6 @@ function DashboardPage() {
   }, [])
 
   const totalReviewRequested = reviewRequestedItems.length
-  const overdueCount = reviewRequestedItems.reduce((count, item) => {
-    const ts = reviewTimestamps[item.id as number]
-    return ts && isOverdue(ts) ? count + 1 : count
-  }, 0)
-
   return (
     <div className="dashboard-container">
       <header className="dashboard-header">
@@ -334,29 +329,6 @@ function DashboardPage() {
 
       <main className="dashboard-main">
         <div className="dashboard-content">
-          <div className="stats-section">
-            <div className="stat-card">
-              <div className="stat-value">{totalReviewRequested}</div>
-              <div className="stat-label">Review Requests</div>
-            </div>
-            {overdueCount > 0 && (
-              <div className="stat-card stat-card-overdue">
-                <div className="stat-value stat-value-amber">{overdueCount}</div>
-                <div className="stat-label">Overdue (24h+)</div>
-              </div>
-            )}
-            <div className="stat-card">
-              <div className="stat-value">{orgAccess.memberOrgs.length}</div>
-              <div className="stat-label">Organizations</div>
-            </div>
-            <button onClick={fetchPullRequests} className="refresh-button" disabled={loading}>
-              <svg className="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
-              </svg>
-              Refresh
-            </button>
-          </div>
-
           <div className="tab-bar">
             <button
               className={`tab-button ${activeTab === 'pull-requests' ? 'tab-button-active' : ''}`}
