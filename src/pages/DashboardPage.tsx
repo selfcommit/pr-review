@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
+import { usePolling } from '../hooks/usePolling'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
 import { isOverdue } from '../utils/time'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -50,6 +51,43 @@ function DashboardPage() {
   const [prSubTab, setPrSubTab] = useState<PRSubTab>('review-requested')
   const { orgAccess, fetchOrgs } = useOrgAccess()
 
+  const handlePollChanges = useCallback((result: {
+    updatedPRs: Array<Record<string, unknown>>
+    removedPRIds: number[]
+    newPRs: Array<Record<string, unknown>>
+    reviewTimestamps: Record<number, string>
+  }) => {
+    if (result.newPRs.length > 0) {
+      setReviewRequestedItems(prev => [...result.newPRs, ...prev])
+    }
+
+    if (result.updatedPRs.length > 0) {
+      const updatedMap = new Map(result.updatedPRs.map(pr => [pr.id as number, pr]))
+      setReviewRequestedItems(prev =>
+        prev.map(item => updatedMap.get(item.id as number) || item)
+      )
+    }
+
+    if (result.removedPRIds.length > 0) {
+      const removedSet = new Set(result.removedPRIds)
+      setReviewRequestedItems(prev =>
+        prev.filter(item => !removedSet.has(item.id as number))
+      )
+    }
+
+    if (Object.keys(result.reviewTimestamps).length > 0) {
+      setReviewTimestamps(prev => ({ ...prev, ...result.reviewTimestamps }))
+    }
+  }, [])
+
+  const pollingEnabled = !loading && !error && activeTab === 'pull-requests' && prSubTab === 'review-requested' && !!getSessionToken()
+
+  const { pause: pausePolling, resume: resumePolling } = usePolling({
+    enabled: pollingEnabled,
+    intervalMs: 60000,
+    onChanges: handlePollChanges,
+  })
+
   const handleOAuthMessage = useCallback((event: MessageEvent) => {
     if (event.origin !== window.location.origin) return
     if (event.data?.type !== 'github-oauth-callback') return
@@ -84,6 +122,7 @@ function DashboardPage() {
 
   const fetchPullRequests = async () => {
     try {
+      pausePolling()
       setLoading(true)
       setError(null)
 
@@ -144,6 +183,7 @@ function DashboardPage() {
       setError(err instanceof Error ? err.message : 'Failed to fetch pull requests')
     } finally {
       setLoading(false)
+      resumePolling()
     }
   }
 

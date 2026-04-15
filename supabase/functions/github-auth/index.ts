@@ -194,6 +194,98 @@ async function fetchReviewRequestedAt(
   return latestTimestamp;
 }
 
+interface SnapshotRow {
+  id: string;
+  pr_id: number;
+  pr_number: number;
+  repo_full_name: string;
+  state: string;
+  draft: boolean;
+  title: string;
+  html_url: string;
+  author_login: string;
+  author_avatar_url: string;
+  pull_request_merged: boolean;
+  pr_updated_at: string;
+}
+
+interface GitHubSearchItem {
+  id: number;
+  number: number;
+  title: string;
+  html_url: string;
+  state: string;
+  draft?: boolean;
+  updated_at: string;
+  created_at: string;
+  repository_url: string;
+  user: { login: string; avatar_url: string };
+  pull_request?: { merged_at?: string };
+}
+
+function extractSnapshotFields(item: GitHubSearchItem) {
+  const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+  return {
+    pr_id: item.id,
+    pr_number: item.number,
+    repo_full_name: repoFullName,
+    state: item.state || "open",
+    draft: item.draft || false,
+    title: item.title || "",
+    html_url: item.html_url || "",
+    author_login: item.user?.login || "",
+    author_avatar_url: item.user?.avatar_url || "",
+    pull_request_merged: item.pull_request?.merged_at != null,
+    pr_updated_at: item.updated_at,
+  };
+}
+
+async function syncSnapshots(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  items: GitHubSearchItem[]
+) {
+  const now = new Date().toISOString();
+
+  for (const item of items) {
+    const fields = extractSnapshotFields(item);
+    await supabase.from("user_pr_snapshots").upsert(
+      {
+        github_user_id: githubUserId,
+        ...fields,
+        snapshot_at: now,
+      },
+      { onConflict: "github_user_id,pr_id" }
+    );
+  }
+
+  const currentPrIds = items.map((i) => i.id);
+  const { data: allSnaps } = await supabase
+    .from("user_pr_snapshots")
+    .select("id, pr_id")
+    .eq("github_user_id", githubUserId);
+
+  if (allSnaps) {
+    const stale = allSnaps.filter(
+      (s: { pr_id: number }) => !currentPrIds.includes(s.pr_id)
+    );
+    for (const row of stale) {
+      await supabase.from("user_pr_snapshots").delete().eq("id", row.id);
+    }
+  }
+}
+
+function snapshotChanged(snap: SnapshotRow, item: GitHubSearchItem): boolean {
+  const fields = extractSnapshotFields(item);
+  return (
+    snap.state !== fields.state ||
+    snap.draft !== fields.draft ||
+    snap.title !== fields.title ||
+    snap.pull_request_merged !== fields.pull_request_merged ||
+    snap.pr_updated_at !== fields.pr_updated_at
+  );
+}
+
 async function resolveReviewTimestamps(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   githubUserId: number,
@@ -631,6 +723,14 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      if (reviewReqResult.items && Array.isArray(reviewReqResult.items)) {
+        await syncSnapshots(
+          supabase,
+          user.github_user_id,
+          reviewReqResult.items as GitHubSearchItem[]
+        );
+      }
+
       return jsonResponse({
         reviewRequested: reviewReqResult,
         reviewed: reviewedResult,
@@ -695,6 +795,132 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({
         assigned: result,
         username: user.login,
+        rateLimitRemaining,
+        rateLimitReset,
+      });
+    }
+
+    if (path === "poll-reviews") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id, access_token, login")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      const ghHeaders = {
+        Authorization: `Bearer ${user.access_token}`,
+        Accept: "application/vnd.github.v3+json",
+      };
+
+      const reviewRequestedQuery = "is:open is:pr user-review-requested:@me";
+      const searchResp = await fetch(
+        `https://api.github.com/search/issues?q=${encodeURIComponent(reviewRequestedQuery)}&per_page=100`,
+        { headers: ghHeaders }
+      );
+
+      if (searchResp.status === 401) {
+        return jsonResponse(
+          { error: "GitHub token expired", code: "token_expired" },
+          401
+        );
+      }
+
+      const rateLimitRemaining =
+        searchResp.headers.get("X-RateLimit-Remaining") || null;
+      const rateLimitReset =
+        searchResp.headers.get("X-RateLimit-Reset") || null;
+
+      const searchRaw = await searchResp.json();
+      const searchResult =
+        searchRaw && typeof searchRaw === "object"
+          ? searchRaw
+          : { items: [], total_count: 0 };
+      if (searchResult.items && !Array.isArray(searchResult.items)) {
+        searchResult.items = [];
+      }
+
+      const freshItems: GitHubSearchItem[] = Array.isArray(searchResult.items)
+        ? searchResult.items
+        : [];
+
+      const { data: snapshots } = await supabase
+        .from("user_pr_snapshots")
+        .select(
+          "id, pr_id, pr_number, repo_full_name, state, draft, title, html_url, author_login, author_avatar_url, pull_request_merged, pr_updated_at"
+        )
+        .eq("github_user_id", user.github_user_id);
+
+      const snapMap = new Map<number, SnapshotRow>();
+      if (snapshots) {
+        for (const s of snapshots) {
+          snapMap.set(s.pr_id, s as SnapshotRow);
+        }
+      }
+
+      const freshIdSet = new Set(freshItems.map((i) => i.id));
+      const updatedItems: GitHubSearchItem[] = [];
+      const newItems: GitHubSearchItem[] = [];
+      const removedPrIds: number[] = [];
+
+      for (const item of freshItems) {
+        const snap = snapMap.get(item.id);
+        if (!snap) {
+          newItems.push(item);
+        } else if (snapshotChanged(snap, item)) {
+          updatedItems.push(item);
+        }
+      }
+
+      for (const [prId] of snapMap) {
+        if (!freshIdSet.has(prId)) {
+          removedPrIds.push(prId);
+        }
+      }
+
+      const changed =
+        updatedItems.length > 0 ||
+        newItems.length > 0 ||
+        removedPrIds.length > 0;
+
+      let newReviewTimestamps: Record<number, string> = {};
+      if (newItems.length > 0) {
+        const prItems = newItems.map((item) => ({
+          id: item.id,
+          number: item.number,
+          repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+        }));
+
+        newReviewTimestamps = await resolveReviewTimestamps(
+          supabase,
+          user.github_user_id,
+          user.access_token,
+          user.login,
+          prItems
+        );
+      }
+
+      if (changed) {
+        await syncSnapshots(supabase, user.github_user_id, freshItems);
+      }
+
+      return jsonResponse({
+        changed,
+        updatedPRs: updatedItems,
+        removedPRIds: removedPrIds,
+        newPRs: newItems,
+        reviewTimestamps: newReviewTimestamps,
         rateLimitRemaining,
         rateLimitReset,
       });
