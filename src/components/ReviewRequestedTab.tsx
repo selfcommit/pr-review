@@ -81,7 +81,7 @@ function ReviewRequestedTab({
   return (
     <>
       <div className="drafts-toggle-bar">
-        <label className="drafts-toggle">
+        <div className="drafts-toggle">
           <span className="drafts-toggle-label">Notification Sound</span>
           <button
             type="button"
@@ -96,7 +96,7 @@ function ReviewRequestedTab({
           >
             <span className="toggle-knob" />
           </button>
-        </label>
+        </div>
         <label className="drafts-toggle">
           <span className="drafts-toggle-label">Show Drafts</span>
           <button
