@@ -2,11 +2,10 @@ import type { OrgAccessResult } from '../hooks/useOrgAccess'
 
 interface OrganizationsTabProps {
   orgAccess: OrgAccessResult
-  onRefreshOrgs: () => void
-  refreshing: boolean
+  onManageAccess: () => void
 }
 
-function OrganizationsTab({ orgAccess, onRefreshOrgs, refreshing }: OrganizationsTabProps) {
+function OrganizationsTab({ orgAccess, onManageAccess }: OrganizationsTabProps) {
   if (orgAccess.loading && orgAccess.memberOrgs.length === 0) {
     return (
       <div className="orgs-tab-loading">
@@ -69,80 +68,46 @@ function OrganizationsTab({ orgAccess, onRefreshOrgs, refreshing }: Organization
           </svg>
           <h2>No organizations found</h2>
           <p>
-            GitHub did not return any organizations for your account. This is usually caused by one of the following:
+            This can happen if you haven't granted organization access or if your org restricts third-party apps.
           </p>
-          <div className="orgs-tab-troubleshoot">
-            <div className="orgs-tab-troubleshoot-item">
-              <strong>1. OAuth scopes missing</strong>
-              <span>
-                Your token needs <code>read:org</code> scope. Current scopes: <code>{orgAccess.oauthScopes || '(none)'}</code>.
-                {!orgAccess.oauthScopes?.includes('read:org') && (
-                  <> Sign out and sign back in to get a token with the correct scopes.</>
-                )}
-              </span>
-            </div>
-            <div className="orgs-tab-troubleshoot-item">
-              <strong>2. Organization has OAuth app restrictions</strong>
-              <span>
-                Many organizations restrict third-party OAuth app access by default. An org admin must approve this app before it can see that organization. Ask your org admin to visit: <code>github.com/orgs/YOUR_ORG/policies/applications</code>
-              </span>
-            </div>
-            <div className="orgs-tab-troubleshoot-item">
-              <strong>3. You haven't granted access for a specific org</strong>
-              <span>
-                When signing in, GitHub may ask you to grant access per-organization. You can manage this at{' '}
-                <a href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer">
-                  github.com/settings/applications
-                </a>.
-              </span>
-            </div>
-          </div>
+          <button className="orgs-tab-manage-btn" onClick={onManageAccess}>
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+            </svg>
+            Manage Organization Access
+          </button>
+          <p className="orgs-tab-empty-hint">
+            You can also manage app permissions at{' '}
+            <a href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer">
+              github.com/settings/applications
+            </a>.
+          </p>
         </div>
       )}
 
       <div className="orgs-tab-help">
-        <div className="orgs-tab-help-header">
-          <svg viewBox="0 0 20 20" fill="currentColor" width="18" height="18">
-            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
-          </svg>
-          <h3>How organization access works</h3>
-        </div>
-
-        <div className="orgs-tab-help-steps">
-          <div className="orgs-tab-help-step">
-            <span className="orgs-tab-help-step-num">1</span>
-            <div className="orgs-tab-help-step-text">
-              <strong>Automatic access</strong>
-              <span>Organizations you belong to on GitHub are automatically connected when you sign in.</span>
-            </div>
-          </div>
-          <div className="orgs-tab-help-step">
-            <span className="orgs-tab-help-step-num">2</span>
-            <div className="orgs-tab-help-step-text">
-              <strong>Missing an organization?</strong>
-              <span>If an organization isn't listed, sign out and sign back in to refresh your access. You may also need to approve the OAuth app for that organization in your GitHub settings.</span>
-            </div>
-          </div>
-        </div>
+        <p className="orgs-tab-help-desc">
+          Missing an organization? Sign in again to grant or revoke access.
+        </p>
 
         <div className="orgs-tab-help-actions">
-          <button
-            className="orgs-tab-refresh-btn"
-            onClick={onRefreshOrgs}
-            disabled={refreshing || orgAccess.loading}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14">
-              <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/>
+          <button className="orgs-tab-manage-btn" onClick={onManageAccess}>
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
             </svg>
-            {refreshing || orgAccess.loading ? 'Refreshing...' : 'Refresh Organizations'}
+            Manage Organization Access
           </button>
-        </div>
-
-        <div className="orgs-tab-help-note">
-          <p>
-            Some organizations require OAuth app approval before granting access.
-            If your org is missing, check your organization's third-party access settings on GitHub.
-          </p>
+          <a
+            className="orgs-tab-help-github-btn"
+            href="https://github.com/settings/applications"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+              <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/>
+            </svg>
+            GitHub App Settings
+          </a>
         </div>
       </div>
     </div>

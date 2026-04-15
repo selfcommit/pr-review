@@ -4,6 +4,7 @@ import { useOrgAccess } from '../hooks/useOrgAccess'
 import { usePolling } from '../hooks/usePolling'
 import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
+import { isInIframe } from '../utils/iframe'
 import { isOverdue } from '../utils/time'
 import { playChime } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
@@ -56,7 +57,6 @@ function DashboardPage() {
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
-  const [refreshingOrgs, setRefreshingOrgs] = useState(false)
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const [prSubTab, setPrSubTab] = useState<PRSubTab>('review-requested')
   const { orgAccess, fetchOrgs } = useOrgAccess()
@@ -279,10 +279,29 @@ function DashboardPage() {
     navigate('/')
   }
 
-  const handleRefreshOrgs = async () => {
-    setRefreshingOrgs(true)
-    await fetchOrgs(true)
-    setRefreshingOrgs(false)
+  const handleManageOrgAccess = async () => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+    const origin = window.location.origin
+    const callbackPath = isInIframe() ? '/auth/callback' : ''
+    const redirectTo = encodeURIComponent(origin + callbackPath)
+    const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
+
+    try {
+      const response = await fetch(loginUrl)
+      const data = await response.json()
+
+      if (data.url) {
+        sessionStorage.setItem('github_oauth_state', data.state)
+
+        if (isInIframe()) {
+          window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
+        } else {
+          window.location.href = data.url
+        }
+      }
+    } catch {
+      // silently fail -- user can retry
+    }
   }
 
   const handleToastClickPR = useCallback((prId: number) => {
@@ -411,8 +430,7 @@ function DashboardPage() {
           {activeTab === 'organizations' && (
             <OrganizationsTab
               orgAccess={orgAccess}
-              onRefreshOrgs={handleRefreshOrgs}
-              refreshing={refreshingOrgs}
+              onManageAccess={handleManageOrgAccess}
             />
           )}
 
