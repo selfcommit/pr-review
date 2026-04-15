@@ -6,6 +6,7 @@ import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
 import { isOverdue } from '../utils/time'
 import { playChime } from '../utils/notificationSound'
+import { sendBrowserNotification } from '../utils/browserNotification'
 import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
@@ -150,6 +151,15 @@ function DashboardPage() {
     if (notifyPrIds.length > 0) {
       if (soundEnabledRef.current) {
         playChime()
+        const title = messages.length === 1
+          ? 'New review request'
+          : `${messages.length} review requests need attention`
+        const body = messages[0].text + (messages.length > 1 ? ` +${messages.length - 1} more` : '')
+        const firstPrId = notifyPrIds[0]
+        sendBrowserNotification(title, body, () => {
+          triggerHighlight([firstPrId])
+          scrollToPR(firstPrId)
+        })
       }
       triggerHighlight(notifyPrIds)
       setToastMessages(messages)

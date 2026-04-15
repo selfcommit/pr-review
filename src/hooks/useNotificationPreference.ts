@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { requestNotificationPermission } from '../utils/browserNotification'
 
 const STORAGE_KEY = 'notification-sound-enabled'
 
@@ -21,6 +22,9 @@ export function useNotificationPreference() {
       localStorage.setItem(STORAGE_KEY, String(value))
     } catch {
       // storage unavailable
+    }
+    if (value) {
+      requestNotificationPermission()
     }
   }, [])
 
