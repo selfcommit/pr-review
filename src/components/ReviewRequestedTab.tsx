@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { PullRequest } from '../types/pullRequest'
 import { groupByOrg, mapItem } from '../types/pullRequest'
 import { isOverdue } from '../utils/time'
+import { playChime } from '../utils/notificationSound'
 import PRCard from './PRCard'
 
 interface UrgencyGroup {
@@ -87,7 +88,11 @@ function ReviewRequestedTab({
             role="switch"
             aria-checked={soundEnabled}
             className={`toggle-switch ${soundEnabled ? 'toggle-switch-on' : ''}`}
-            onClick={() => onSoundToggle(!soundEnabled)}
+            onClick={() => {
+              const next = !soundEnabled
+              onSoundToggle(next)
+              if (next) playChime()
+            }}
           >
             <span className="toggle-knob" />
           </button>
