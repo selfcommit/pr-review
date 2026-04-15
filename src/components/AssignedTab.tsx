@@ -15,15 +15,17 @@ function AssignedTab() {
       setError(null)
 
       const data = await apiGet<{
-        assigned: { items?: Array<Record<string, unknown>>; message?: string }
+        assigned?: { items?: Array<Record<string, unknown>>; message?: string } | null
         username: string
       }>('pull-requests-assigned')
 
-      if (data.assigned.message && !data.assigned.items) {
-        throw new Error(data.assigned.message)
+      const assigned = data.assigned || { items: [] }
+
+      if (assigned.message && !assigned.items) {
+        throw new Error(assigned.message)
       }
 
-      const items = data.assigned.items || []
+      const items = Array.isArray(assigned.items) ? assigned.items : []
       const prs = items.map(mapItem)
       setOrgPRs(groupByOrg(prs))
     } catch (err) {

@@ -25,26 +25,26 @@ export interface OrgPRs {
 }
 
 export function mapItem(item: Record<string, unknown>): PullRequest {
-  const repoUrl = item.repository_url as string
-  const htmlUrl = item.html_url as string
-  const itemUser = item.user as { login: string; avatar_url: string }
+  const repoUrl = (item.repository_url as string) || ''
+  const htmlUrl = (item.html_url as string) || ''
+  const itemUser = (item.user as { login: string; avatar_url: string }) || { login: 'unknown', avatar_url: '' }
   const pr = item.pull_request as { merged_at?: string } | undefined
   return {
     id: item.id as number,
-    title: item.title as string,
+    title: (item.title as string) || '',
     html_url: htmlUrl,
-    created_at: item.created_at as string,
-    updated_at: item.updated_at as string,
-    state: item.state as string,
+    created_at: (item.created_at as string) || '',
+    updated_at: (item.updated_at as string) || '',
+    state: (item.state as string) || 'open',
     pull_request_merged: pr?.merged_at != null,
     repository: {
-      name: repoUrl.split('/').pop()!,
+      name: repoUrl.split('/').pop() || '',
       full_name: repoUrl.split('/').slice(-2).join('/'),
       html_url: htmlUrl.split('/pull/')[0],
     },
     user: {
-      login: itemUser.login,
-      avatar_url: itemUser.avatar_url,
+      login: itemUser.login || 'unknown',
+      avatar_url: itemUser.avatar_url || '',
     },
     draft: (item.draft as boolean) || false,
   }

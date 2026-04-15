@@ -93,18 +93,22 @@ function DashboardPage() {
       }
 
       const data = await apiGet<{
-        reviewRequested: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string }
-        reviewed: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string }
-        reviewTimestamps: Record<number, string>
+        reviewRequested?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
+        reviewed?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
+        reviewTimestamps?: Record<number, string> | null
         username: string
         rateLimitRemaining: string | null
         rateLimitReset: string | null
         oauthScopes: string | null
       }>('pull-requests')
 
+      const emptyResult: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } = { items: [], total_count: 0 }
+      const reviewRequested = data.reviewRequested || emptyResult
+      const reviewed = data.reviewed || emptyResult
+
       const queries = [
-        { query: 'is:open is:pr user-review-requested:@me', result: data.reviewRequested },
-        { query: 'is:pr reviewed-by:@me sort:updated-desc', result: data.reviewed },
+        { query: 'is:open is:pr user-review-requested:@me', result: reviewRequested },
+        { query: 'is:pr reviewed-by:@me sort:updated-desc', result: reviewed },
       ]
 
       const queryDebugInfos: QueryDebugInfo[] = queries.map((q, i) => ({
@@ -130,8 +134,8 @@ function DashboardPage() {
         }
       }
 
-      setReviewRequestedItems(data.reviewRequested.items || [])
-      setReviewedItems(data.reviewed.items || [])
+      setReviewRequestedItems(Array.isArray(reviewRequested.items) ? reviewRequested.items : [])
+      setReviewedItems(Array.isArray(reviewed.items) ? reviewed.items : [])
       setReviewTimestamps(data.reviewTimestamps || {})
     } catch (err) {
       if (err instanceof Error && err.message === 'Session expired') {

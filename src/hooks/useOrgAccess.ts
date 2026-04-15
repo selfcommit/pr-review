@@ -38,7 +38,8 @@ export function useOrgAccess() {
       const path = refresh ? 'orgs?refresh=true' : 'orgs'
       const data = await apiGet<OrgApiResponse>(path)
 
-      const memberOrgs: OrgAccessInfo[] = data.orgs.map(org => ({
+      const orgs = Array.isArray(data.orgs) ? data.orgs : []
+      const memberOrgs: OrgAccessInfo[] = orgs.map(org => ({
         login: org.org_login,
         avatar_url: org.org_avatar_url || `https://github.com/${org.org_login}.png?size=80`,
         role: org.role === 'admin' ? 'admin' : 'member',

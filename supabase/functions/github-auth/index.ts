@@ -585,10 +585,24 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const [reviewReqResult, reviewedResult] = await Promise.all([
+      const [reviewReqRaw, reviewedRaw] = await Promise.all([
         reviewReqResp.json(),
         reviewedResp.json(),
       ]);
+
+      const reviewReqResult = reviewReqRaw && typeof reviewReqRaw === "object"
+        ? reviewReqRaw
+        : { items: [], total_count: 0 };
+      const reviewedResult = reviewedRaw && typeof reviewedRaw === "object"
+        ? reviewedRaw
+        : { items: [], total_count: 0 };
+
+      if (reviewReqResult.items && !Array.isArray(reviewReqResult.items)) {
+        reviewReqResult.items = [];
+      }
+      if (reviewedResult.items && !Array.isArray(reviewedResult.items)) {
+        reviewedResult.items = [];
+      }
 
       const rateLimitRemaining =
         reviewReqResp.headers.get("X-RateLimit-Remaining") || null;
@@ -665,7 +679,14 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      const result = await resp.json();
+      const resultRaw = await resp.json();
+      const result = resultRaw && typeof resultRaw === "object"
+        ? resultRaw
+        : { items: [], total_count: 0 };
+      if (result.items && !Array.isArray(result.items)) {
+        result.items = [];
+      }
+
       const rateLimitRemaining =
         resp.headers.get("X-RateLimit-Remaining") || null;
       const rateLimitReset =
