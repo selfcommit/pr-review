@@ -156,7 +156,8 @@ async function fetchReviewRequestedAt(
     Accept: "application/vnd.github.v3+json",
   };
 
-  let latestTimestamp: string | null = null;
+  let latestReviewRequested: string | null = null;
+  let latestReadyForReview: string | null = null;
   let page = 1;
   const perPage = 100;
 
@@ -177,13 +178,16 @@ async function fetchReviewRequestedAt(
     if (!Array.isArray(events) || events.length === 0) break;
 
     for (const event of events) {
-      if (event.event !== "review_requested") continue;
-      const reviewer = event.requested_reviewer;
-      if (
-        reviewer &&
-        reviewer.login?.toLowerCase() === targetLogin.toLowerCase()
-      ) {
-        latestTimestamp = event.created_at;
+      if (event.event === "review_requested") {
+        const reviewer = event.requested_reviewer;
+        if (
+          reviewer &&
+          reviewer.login?.toLowerCase() === targetLogin.toLowerCase()
+        ) {
+          latestReviewRequested = event.created_at;
+        }
+      } else if (event.event === "ready_for_review") {
+        latestReadyForReview = event.created_at;
       }
     }
 
@@ -191,7 +195,16 @@ async function fetchReviewRequestedAt(
     page++;
   }
 
-  return latestTimestamp;
+  if (!latestReviewRequested) return null;
+
+  if (
+    latestReadyForReview &&
+    new Date(latestReadyForReview) > new Date(latestReviewRequested)
+  ) {
+    return latestReadyForReview;
+  }
+
+  return latestReviewRequested;
 }
 
 interface SnapshotRow {
@@ -291,7 +304,8 @@ async function resolveReviewTimestamps(
   githubUserId: number,
   accessToken: string,
   login: string,
-  prItems: Array<{ id: number; number: number; repoFullName: string }>
+  prItems: Array<{ id: number; number: number; repoFullName: string }>,
+  forceRefreshIds: Set<number> = new Set()
 ): Promise<Record<number, string>> {
   const timestamps: Record<number, string> = {};
   if (prItems.length === 0) return timestamps;
@@ -305,7 +319,9 @@ async function resolveReviewTimestamps(
 
   if (cached) {
     for (const row of cached) {
-      timestamps[row.pr_id] = row.review_requested_at;
+      if (!forceRefreshIds.has(row.pr_id)) {
+        timestamps[row.pr_id] = row.review_requested_at;
+      }
     }
   }
 
@@ -894,9 +910,20 @@ Deno.serve(async (req: Request) => {
         newItems.length > 0 ||
         removedPrIds.length > 0;
 
+      const draftExitedItems: GitHubSearchItem[] = [];
+      for (const item of updatedItems) {
+        const snap = snapMap.get(item.id);
+        if (snap && snap.draft === true && !item.draft) {
+          draftExitedItems.push(item);
+        }
+      }
+
+      const itemsNeedingTimestamps = [...newItems, ...draftExitedItems];
+      const forceRefreshIds = new Set(draftExitedItems.map((i) => i.id));
+
       let newReviewTimestamps: Record<number, string> = {};
-      if (newItems.length > 0) {
-        const prItems = newItems.map((item) => ({
+      if (itemsNeedingTimestamps.length > 0) {
+        const prItems = itemsNeedingTimestamps.map((item) => ({
           id: item.id,
           number: item.number,
           repoFullName: item.repository_url.split("/").slice(-2).join("/"),
@@ -907,7 +934,8 @@ Deno.serve(async (req: Request) => {
           user.github_user_id,
           user.access_token,
           user.login,
-          prItems
+          prItems,
+          forceRefreshIds
         );
       }
 

@@ -14,7 +14,7 @@ function groupByUrgency(prs: PullRequest[]): UrgencyGroup[] {
   const recent: PullRequest[] = []
 
   for (const pr of prs) {
-    if (pr.review_requested_at && isOverdue(pr.review_requested_at)) {
+    if (!pr.draft && pr.review_requested_at && isOverdue(pr.review_requested_at)) {
       overdue.push(pr)
     } else {
       recent.push(pr)
