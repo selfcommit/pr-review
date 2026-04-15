@@ -35,7 +35,7 @@ function PRCard({ pr, showState, showWaitTime, highlighted }: PRCardProps) {
           <span className="pr-header-separator">·</span>
           <span className="author-name">{pr.user.login}</span>
           <span className="pr-header-separator">·</span>
-          <span className="pr-date">{formatDate(pr.updated_at)}</span>
+          <span className="pr-date">Last Updated: {formatDate(pr.updated_at)}</span>
         </div>
         <div className="pr-badges">
           {pr.draft && <span className="draft-badge">Draft</span>}
