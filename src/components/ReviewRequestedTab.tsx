@@ -49,6 +49,16 @@ interface ReviewRequestedTabProps {
   highlightedPRIds: Set<number>
 }
 
+const HIDE_CO_KEY = 'hide-codeowners-satisfied'
+
+function readHideCodeowners(): boolean {
+  try {
+    return localStorage.getItem(HIDE_CO_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 function ReviewRequestedTab({
   reviewRequestedItems,
   reviewedItems,
@@ -58,6 +68,19 @@ function ReviewRequestedTab({
   highlightedPRIds,
 }: ReviewRequestedTabProps) {
   const [showDrafts, setShowDrafts] = useState(false)
+  const [hideCodeownersSatisfied, setHideCodeownersSatisfied] = useState(readHideCodeowners)
+
+  const toggleHideCodeowners = () => {
+    setHideCodeownersSatisfied(prev => {
+      const next = !prev
+      try {
+        localStorage.setItem(HIDE_CO_KEY, String(next))
+      } catch {
+        // storage unavailable
+      }
+      return next
+    })
+  }
 
   const allReviewPRs = reviewRequestedItems.map(item => {
     const pr = mapItem(item)
@@ -66,7 +89,10 @@ function ReviewRequestedTab({
     return pr
   })
 
-  const reviewPRs = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
+  const afterDraftFilter = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
+  const reviewPRs = hideCodeownersSatisfied
+    ? afterDraftFilter.filter(pr => pr.codeowners_satisfied !== true)
+    : afterDraftFilter
 
   const urgencyGroups = groupByUrgency(reviewPRs)
   const overdueCount = urgencyGroups.find(g => g.label === 'overdue')?.prs.length || 0
@@ -105,6 +131,18 @@ function ReviewRequestedTab({
             aria-checked={showDrafts}
             className={`toggle-switch ${showDrafts ? 'toggle-switch-on' : ''}`}
             onClick={() => setShowDrafts(prev => !prev)}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </label>
+        <label className="drafts-toggle">
+          <span className="drafts-toggle-label">Hide CODEOWNERS satisfied</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={hideCodeownersSatisfied}
+            className={`toggle-switch ${hideCodeownersSatisfied ? 'toggle-switch-on' : ''}`}
+            onClick={toggleHideCodeowners}
           >
             <span className="toggle-knob" />
           </button>

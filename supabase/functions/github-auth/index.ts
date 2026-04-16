@@ -299,6 +299,52 @@ function snapshotChanged(snap: SnapshotRow, item: GitHubSearchItem): boolean {
   );
 }
 
+async function fetchReviewDecisions(
+  accessToken: string,
+  items: GitHubSearchItem[]
+): Promise<Record<number, string | null>> {
+  const result: Record<number, string | null> = {};
+  if (items.length === 0) return result;
+
+  const aliases = items.map((item, idx) => {
+    const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+    const [owner, repo] = repoFullName.split("/");
+    return `pr${idx}: repository(owner: "${owner}", name: "${repo}") { pullRequest(number: ${item.number}) { id reviewDecision } }`;
+  });
+
+  const query = `query { ${aliases.join(" ")} }`;
+
+  try {
+    const resp = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/vnd.github.v3+json",
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!resp.ok) {
+      console.error("[fetchReviewDecisions] graphql failed", resp.status);
+      return result;
+    }
+
+    const data = await resp.json();
+    if (!data || !data.data) return result;
+
+    items.forEach((item, idx) => {
+      const node = data.data[`pr${idx}`];
+      const decision = node?.pullRequest?.reviewDecision ?? null;
+      result[item.id] = decision;
+    });
+  } catch (err) {
+    console.error("[fetchReviewDecisions] error", err);
+  }
+
+  return result;
+}
+
 interface GitHubReview {
   id: number;
   user?: { id: number; login: string } | null;
@@ -847,6 +893,24 @@ Deno.serve(async (req: Request) => {
           user.access_token,
           reviewedResult.items as GitHubSearchItem[]
         );
+      }
+
+      if (reviewReqResult.items && Array.isArray(reviewReqResult.items)) {
+        const decisions = await fetchReviewDecisions(
+          user.access_token,
+          reviewReqResult.items as GitHubSearchItem[]
+        );
+        for (const item of reviewReqResult.items as Array<
+          GitHubSearchItem & {
+            review_decision?: string | null;
+            codeowners_satisfied?: boolean | null;
+          }
+        >) {
+          const decision = decisions[item.id] ?? null;
+          item.review_decision = decision;
+          item.codeowners_satisfied =
+            decision === null ? null : decision === "APPROVED";
+        }
       }
 
       return jsonResponse({
