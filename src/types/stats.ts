@@ -1,4 +1,4 @@
-export interface StatsPR {
+interface StatsPR {
   pr_id: number
   pr_number: number
   title: string

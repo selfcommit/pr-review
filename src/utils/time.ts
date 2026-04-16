@@ -25,7 +25,7 @@ export function formatWaitTime(dateString: string): string {
   return `${Math.floor(diffDays / 7)}w`
 }
 
-export type UrgencyLevel = 'green' | 'amber' | 'red'
+type UrgencyLevel = 'green' | 'amber' | 'red'
 
 export function getUrgencyLevel(dateString: string): UrgencyLevel {
   const date = new Date(dateString)

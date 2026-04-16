@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { apiGet } from '../utils/api'
 
-export interface OrgAccessInfo {
+interface OrgAccessInfo {
   login: string
   avatar_url: string
   role: 'admin' | 'member'

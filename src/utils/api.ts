@@ -12,7 +12,7 @@ export function setSessionToken(token: string): void {
   localStorage.setItem(SESSION_KEY, token);
 }
 
-export function clearSession(): void {
+function clearSession(): void {
   localStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(USER_CACHE_KEY);
 }
@@ -55,7 +55,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   return data;
 }
 
-export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const resp = await fetch(`${AUTH_BASE}/${path}`, {
     method: 'POST',
     headers: authHeaders(),
@@ -79,15 +79,5 @@ export async function logout(): Promise<void> {
   } catch {
   }
   clearSession();
-}
-
-export async function getLoginUrl(redirectTo: string): Promise<{ url: string; state: string } | null> {
-  const loginUrl = `${AUTH_BASE}/login?redirect_to=${encodeURIComponent(redirectTo)}`;
-  const response = await fetch(loginUrl);
-  const data = await response.json();
-  if (data.url && data.state) {
-    return { url: data.url, state: data.state };
-  }
-  return null;
 }
 

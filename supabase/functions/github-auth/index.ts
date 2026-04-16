@@ -676,28 +676,6 @@ Deno.serve(async (req: Request) => {
       return redirectResponse(`${appUrl}/#${params.toString()}`);
     }
 
-    if (path === "session") {
-      const authHeader = req.headers.get("Authorization");
-      if (!authHeader?.startsWith("Bearer ")) {
-        return jsonResponse({ error: "Missing session token" }, 401);
-      }
-
-      const sessionToken = authHeader.replace("Bearer ", "");
-      const supabase = getSupabaseAdmin();
-
-      const { data: user } = await supabase
-        .from("app_users")
-        .select("github_user_id, login, name, avatar_url, email")
-        .eq("session_token", sessionToken)
-        .maybeSingle();
-
-      if (!user) {
-        return jsonResponse({ error: "Invalid session" }, 401);
-      }
-
-      return jsonResponse({ user });
-    }
-
     if (path === "orgs") {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {

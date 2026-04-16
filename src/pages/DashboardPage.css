@@ -377,16 +377,6 @@
   color: #3b82f6;
 }
 
-.tab-badge {
-  background: rgba(234, 179, 8, 0.2);
-  color: #fbbf24;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 10px;
-  line-height: 1.3;
-}
-
 .sub-tab-bar {
   display: flex;
   gap: 2px;
@@ -744,10 +734,6 @@
   margin-bottom: 8px;
 }
 
-.orgs-tab-section-title-warning {
-  color: #fbbf24;
-}
-
 .orgs-tab-section-title-ok {
   color: #4ade80;
 }
@@ -757,11 +743,6 @@
   font-weight: 700;
   padding: 2px 8px;
   border-radius: 10px;
-}
-
-.orgs-tab-count-warning {
-  background: rgba(234, 179, 8, 0.2);
-  color: #fbbf24;
 }
 
 .orgs-tab-count-ok {
@@ -789,15 +770,6 @@
   border-radius: 10px;
   border: 1px solid rgba(71, 85, 105, 0.3);
   transition: all 0.2s ease;
-}
-
-.orgs-tab-card-restricted {
-  background: rgba(234, 179, 8, 0.04);
-  border-color: rgba(234, 179, 8, 0.15);
-}
-
-.orgs-tab-card-restricted:hover {
-  border-color: rgba(234, 179, 8, 0.3);
 }
 
 .orgs-tab-card-connected {
@@ -856,223 +828,9 @@
   border-radius: 6px;
 }
 
-.orgs-tab-status-restricted {
-  background: rgba(234, 179, 8, 0.12);
-  color: #fbbf24;
-}
-
 .orgs-tab-status-connected {
   background: rgba(34, 197, 94, 0.1);
   color: #4ade80;
-}
-
-.orgs-tab-grant-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(59, 130, 246, 0.1);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.orgs-tab-grant-btn:hover {
-  background: rgba(59, 130, 246, 0.2);
-  border-color: rgba(59, 130, 246, 0.5);
-}
-
-.orgs-tab-hint {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(71, 85, 105, 0.2);
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.orgs-tab-hint p {
-  color: #94a3b8;
-  font-size: 13px;
-  line-height: 1.5;
-  margin: 0;
-}
-
-.orgs-tab-help-method {
-  background: rgba(15, 23, 42, 0.3);
-  border: 1px solid rgba(71, 85, 105, 0.2);
-  border-radius: 12px;
-  padding: 20px;
-}
-
-.orgs-tab-help-method-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 15px;
-  font-weight: 700;
-  color: #e2e8f0;
-  margin: 0 0 16px;
-}
-
-.orgs-tab-help-method-badge {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  flex-shrink: 0;
-}
-
-.orgs-tab-help-method-badge-recommended {
-  background: rgba(34, 197, 94, 0.15);
-  color: #4ade80;
-}
-
-.orgs-tab-help-method-badge-alt {
-  background: rgba(148, 163, 184, 0.15);
-  color: #94a3b8;
-}
-
-.orgs-tab-help-method-desc {
-  color: #94a3b8;
-  font-size: 14px;
-  line-height: 1.6;
-  margin: 0 0 16px;
-}
-
-.orgs-tab-help-divider {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin: 20px 0;
-}
-
-.orgs-tab-help-divider::before,
-.orgs-tab-help-divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: rgba(71, 85, 105, 0.3);
-}
-
-.orgs-tab-help-divider span {
-  color: #64748b;
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.orgs-tab-help-revoke-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(71, 85, 105, 0.15);
-  color: #94a3b8;
-  border: 1px solid rgba(71, 85, 105, 0.3);
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.orgs-tab-help-revoke-btn:hover {
-  background: rgba(71, 85, 105, 0.25);
-  border-color: rgba(71, 85, 105, 0.5);
-  color: #e2e8f0;
-}
-
-.orgs-tab-revoke-reconnect-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: rgba(234, 179, 8, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(234, 179, 8, 0.3);
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.orgs-tab-revoke-reconnect-btn:hover:not(:disabled) {
-  background: rgba(234, 179, 8, 0.25);
-  border-color: rgba(234, 179, 8, 0.5);
-}
-
-.orgs-tab-revoke-reconnect-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.orgs-tab-reauth-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  padding: 20px;
-  background: rgba(234, 179, 8, 0.08);
-  border: 1px solid rgba(234, 179, 8, 0.25);
-  border-radius: 12px;
-}
-
-.orgs-tab-reauth-banner-icon {
-  color: #eab308;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.orgs-tab-reauth-banner-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  flex: 1;
-}
-
-.orgs-tab-reauth-banner-text {
-  color: #e2e8f0;
-  font-size: 14px;
-  line-height: 1.6;
-  margin: 0;
-}
-
-.orgs-tab-reauth-banner-text strong {
-  color: #fbbf24;
-}
-
-.orgs-tab-reauth-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  align-self: flex-start;
-  background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
-  color: #1e1b4b;
-  border: none;
-  padding: 10px 24px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-}
-
-.orgs-tab-reauth-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(234, 179, 8, 0.35);
 }
 
 .orgs-tab-reauth-error {
@@ -1208,10 +966,6 @@
 
 .debug-status-ok {
   color: #4ade80;
-}
-
-.debug-status-restricted {
-  color: #f87171;
 }
 
 .debug-meta {
@@ -1712,26 +1466,12 @@
     justify-content: space-between;
   }
 
-  .orgs-tab-hint {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
   .orgs-tab-help-actions {
     flex-direction: column;
     align-items: stretch;
   }
 
   .orgs-tab-manage-btn {
-    justify-content: center;
-  }
-
-  .orgs-tab-reauth-banner {
-    flex-direction: column;
-  }
-
-  .orgs-tab-reauth-btn {
-    align-self: stretch;
     justify-content: center;
   }
 
