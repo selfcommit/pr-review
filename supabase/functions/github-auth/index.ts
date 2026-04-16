@@ -299,6 +299,121 @@ function snapshotChanged(snap: SnapshotRow, item: GitHubSearchItem): boolean {
   );
 }
 
+interface GitHubReview {
+  id: number;
+  user?: { id: number; login: string } | null;
+  state: string;
+  submitted_at: string | null;
+}
+
+async function syncPrReviewsForItems(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  accessToken: string,
+  reviewedItems: GitHubSearchItem[],
+  maxPrsToFetch = 8
+) {
+  if (reviewedItems.length === 0) return;
+
+  const prIds = reviewedItems.map((i) => i.id);
+  const { data: existing } = await supabase
+    .from("pr_reviews")
+    .select("pr_id")
+    .eq("github_user_id", githubUserId)
+    .in("pr_id", prIds);
+
+  const alreadyTracked = new Set<number>(
+    (existing || []).map((r: { pr_id: number }) => r.pr_id)
+  );
+
+  const toFetch = reviewedItems
+    .filter((item) => !alreadyTracked.has(item.id))
+    .slice(0, maxPrsToFetch);
+
+  if (toFetch.length === 0) return;
+
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/vnd.github.v3+json",
+  };
+
+  await Promise.all(
+    toFetch.map(async (item) => {
+      const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+      const [owner, repo] = repoFullName.split("/");
+      try {
+        const resp = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/pulls/${item.number}/reviews?per_page=100`,
+          { headers }
+        );
+        if (!resp.ok) return;
+        const reviews = (await resp.json()) as GitHubReview[];
+        if (!Array.isArray(reviews)) return;
+
+        const mine = reviews.filter(
+          (r) => r.user && r.user.id === githubUserId && r.submitted_at
+        );
+        if (mine.length === 0) return;
+
+        const { data: reqRow } = await supabase
+          .from("review_requests")
+          .select("id, review_requested_at, reviewed_at")
+          .eq("github_user_id", githubUserId)
+          .eq("pr_id", item.id)
+          .maybeSingle();
+
+        const requestedAt = reqRow?.review_requested_at
+          ? new Date(reqRow.review_requested_at).getTime()
+          : null;
+
+        for (const review of mine) {
+          const submittedAt = review.submitted_at as string;
+          let latencySeconds: number | null = null;
+          if (requestedAt) {
+            const diff = Math.floor(
+              (new Date(submittedAt).getTime() - requestedAt) / 1000
+            );
+            if (diff >= 0) latencySeconds = diff;
+          }
+
+          await supabase.from("pr_reviews").upsert(
+            {
+              github_user_id: githubUserId,
+              pr_id: item.id,
+              pr_number: item.number,
+              repo_full_name: repoFullName,
+              pr_title: item.title || "",
+              pr_html_url: item.html_url || "",
+              review_id: review.id,
+              review_state: (review.state || "commented").toLowerCase(),
+              submitted_at: submittedAt,
+              latency_seconds: latencySeconds,
+            },
+            { onConflict: "github_user_id,review_id" }
+          );
+        }
+
+        const firstCompletion = mine
+          .filter((r) => {
+            const s = (r.state || "").toUpperCase();
+            return s === "APPROVED" || s === "CHANGES_REQUESTED";
+          })
+          .map((r) => r.submitted_at as string)
+          .sort()[0];
+
+        if (firstCompletion && reqRow && !reqRow.reviewed_at) {
+          await supabase
+            .from("review_requests")
+            .update({ reviewed_at: firstCompletion })
+            .eq("id", reqRow.id);
+        }
+      } catch (err) {
+        console.error("[syncPrReviewsForItems] failed", item.id, err);
+      }
+    })
+  );
+}
+
 async function resolveReviewTimestamps(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   githubUserId: number,
@@ -747,6 +862,15 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      if (reviewedResult.items && Array.isArray(reviewedResult.items)) {
+        await syncPrReviewsForItems(
+          supabase,
+          user.github_user_id,
+          user.access_token,
+          reviewedResult.items as GitHubSearchItem[]
+        );
+      }
+
       return jsonResponse({
         reviewRequested: reviewReqResult,
         reviewed: reviewedResult,
@@ -952,6 +1076,144 @@ Deno.serve(async (req: Request) => {
         rateLimitRemaining,
         rateLimitReset,
       });
+    }
+
+    if (path === "stats") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      const { data: reviews } = await supabase
+        .from("pr_reviews")
+        .select(
+          "pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
+        )
+        .eq("github_user_id", user.github_user_id);
+
+      const rows = reviews || [];
+
+      interface RepoAgg {
+        repo: string;
+        total: number;
+        approved: number;
+        changesRequested: number;
+        commented: number;
+        latencies: number[];
+        prMap: Map<
+          number,
+          {
+            pr_id: number;
+            pr_number: number;
+            title: string;
+            html_url: string;
+            latency_seconds: number;
+            review_state: string;
+            submitted_at: string;
+          }
+        >;
+      }
+
+      const byRepo = new Map<string, RepoAgg>();
+
+      for (const r of rows) {
+        const repo = r.repo_full_name as string;
+        let agg = byRepo.get(repo);
+        if (!agg) {
+          agg = {
+            repo,
+            total: 0,
+            approved: 0,
+            changesRequested: 0,
+            commented: 0,
+            latencies: [],
+            prMap: new Map(),
+          };
+          byRepo.set(repo, agg);
+        }
+        agg.total += 1;
+        const state = (r.review_state as string) || "commented";
+        if (state === "approved") agg.approved += 1;
+        else if (state === "changes_requested") agg.changesRequested += 1;
+        else agg.commented += 1;
+
+        const lat = r.latency_seconds as number | null;
+        if (typeof lat === "number" && lat >= 0) {
+          const existingPr = agg.prMap.get(r.pr_id as number);
+          if (
+            (state === "approved" || state === "changes_requested") &&
+            (!existingPr || new Date(r.submitted_at as string).getTime() <
+              new Date(existingPr.submitted_at).getTime())
+          ) {
+            agg.prMap.set(r.pr_id as number, {
+              pr_id: r.pr_id as number,
+              pr_number: r.pr_number as number,
+              title: (r.pr_title as string) || "",
+              html_url: (r.pr_html_url as string) || "",
+              latency_seconds: lat,
+              review_state: state,
+              submitted_at: r.submitted_at as string,
+            });
+          }
+        }
+      }
+
+      function percentile(values: number[], p: number): number | null {
+        if (values.length === 0) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const idx = Math.ceil((p / 100) * sorted.length) - 1;
+        return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
+      }
+
+      const perRepo = Array.from(byRepo.values()).map((agg) => {
+        const prs = Array.from(agg.prMap.values()).sort(
+          (a, b) => b.latency_seconds - a.latency_seconds
+        );
+        const latencies = prs.map((p) => p.latency_seconds);
+        return {
+          repo: agg.repo,
+          total_reviews: agg.total,
+          approved: agg.approved,
+          changes_requested: agg.changesRequested,
+          commented: agg.commented,
+          p90_latency_seconds: percentile(latencies, 90),
+          latency_sample_size: latencies.length,
+          prs,
+        };
+      });
+
+      perRepo.sort((a, b) => b.total_reviews - a.total_reviews);
+
+      const allLatencies = perRepo.flatMap((r) =>
+        r.prs.map((p) => p.latency_seconds)
+      );
+
+      const summary = {
+        total_reviews: perRepo.reduce((s, r) => s + r.total_reviews, 0),
+        approved: perRepo.reduce((s, r) => s + r.approved, 0),
+        changes_requested: perRepo.reduce(
+          (s, r) => s + r.changes_requested,
+          0
+        ),
+        commented: perRepo.reduce((s, r) => s + r.commented, 0),
+        p90_latency_seconds: percentile(allLatencies, 90),
+        latency_sample_size: allLatencies.length,
+      };
+
+      return jsonResponse({ summary, repos: perRepo });
     }
 
     if (path === "logout") {

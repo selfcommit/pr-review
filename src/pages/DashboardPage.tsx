@@ -13,6 +13,7 @@ import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import ReviewRequestedTab from '../components/ReviewRequestedTab'
 import AssignedTab from '../components/AssignedTab'
+import StatsTab from '../components/StatsTab'
 import NotificationToast from '../components/NotificationToast'
 import './DashboardPage.css'
 
@@ -44,7 +45,7 @@ interface ToastMessage {
   text: string
 }
 
-type TabId = 'pull-requests' | 'organizations'
+type TabId = 'pull-requests' | 'stats' | 'organizations'
 type PRSubTab = 'review-requested' | 'assigned'
 
 function DashboardPage() {
@@ -359,6 +360,15 @@ function DashboardPage() {
               Pull Requests
             </button>
             <button
+              className={`tab-button ${activeTab === 'stats' ? 'tab-button-active' : ''}`}
+              onClick={() => setActiveTab('stats')}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+                <path d="M1.75 14.25h12.5a.75.75 0 0 1 0 1.5H1.75a.75.75 0 0 1 0-1.5ZM2.5 12V3.75a.75.75 0 0 1 1.5 0V12a.75.75 0 0 1-1.5 0Zm4 0V6.75a.75.75 0 0 1 1.5 0V12a.75.75 0 0 1-1.5 0Zm4 0V1.75a.75.75 0 0 1 1.5 0V12a.75.75 0 0 1-1.5 0Z"/>
+              </svg>
+              Stats
+            </button>
+            <button
               className={`tab-button ${activeTab === 'organizations' ? 'tab-button-active' : ''}`}
               onClick={() => setActiveTab('organizations')}
             >
@@ -426,6 +436,8 @@ function DashboardPage() {
               {prSubTab === 'assigned' && <AssignedTab />}
             </>
           )}
+
+          {activeTab === 'stats' && <StatsTab />}
 
           {activeTab === 'organizations' && (
             <OrganizationsTab

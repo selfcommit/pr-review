@@ -1381,6 +1381,257 @@
   background: rgba(71, 85, 105, 0.3);
 }
 
+.stats-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.stats-section {
+  background: rgba(30, 41, 59, 0.3);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 16px;
+  padding: 24px;
+  backdrop-filter: blur(10px);
+}
+
+.stats-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.stats-section-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin: 0 0 16px;
+}
+
+.stats-section-header .stats-section-title {
+  margin: 0;
+}
+
+.stats-refresh-btn {
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.stats-refresh-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.stat-card {
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  background: rgba(15, 23, 42, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-card-label {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.stat-card-value {
+  color: #e2e8f0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.stat-card-blue {
+  border-color: rgba(59, 130, 246, 0.3);
+}
+.stat-card-blue .stat-card-value {
+  color: #60a5fa;
+}
+
+.stat-card-green {
+  border-color: rgba(34, 197, 94, 0.25);
+}
+.stat-card-green .stat-card-value {
+  color: #4ade80;
+}
+
+.stat-card-amber {
+  border-color: rgba(245, 158, 11, 0.25);
+}
+.stat-card-amber .stat-card-value {
+  color: #fbbf24;
+}
+
+.stat-card-slate .stat-card-value {
+  color: #e2e8f0;
+}
+
+.repo-stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.repo-stats-card {
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.repo-stats-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.repo-stats-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.repo-stats-subtitle {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.repo-stats-drawer-toggle {
+  margin-top: 12px;
+  background: none;
+  border: none;
+  color: #60a5fa;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.repo-stats-drawer-toggle:hover {
+  text-decoration: underline;
+}
+
+.repo-stats-pr-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid rgba(71, 85, 105, 0.2);
+  padding-top: 12px;
+}
+
+.repo-stats-pr-row {
+  display: grid;
+  grid-template-columns: 60px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(71, 85, 105, 0.2);
+  transition: all 0.15s ease;
+}
+
+.repo-stats-pr-row:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+  transform: translateX(2px);
+}
+
+.repo-stats-pr-number {
+  color: #64748b;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 13px;
+}
+
+.repo-stats-pr-title {
+  color: #e2e8f0;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-stats-pr-state {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.repo-stats-pr-state.state-approved {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.repo-stats-pr-state.state-changes_requested {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+}
+
+.repo-stats-pr-latency {
+  color: #e2e8f0;
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 50px;
+  text-align: right;
+}
+
+.stats-empty {
+  text-align: center;
+  padding: 64px 24px;
+  color: #94a3b8;
+}
+
+.stats-empty h2 {
+  color: #e2e8f0;
+  font-size: 22px;
+  margin-bottom: 12px;
+}
+
+.stats-empty p {
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .stats-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .repo-stats-pr-row {
+    grid-template-columns: 50px 1fr auto;
+  }
+  .repo-stats-pr-state {
+    display: none;
+  }
+}
+
 @media (max-width: 768px) {
   .header-content {
     flex-direction: column;
