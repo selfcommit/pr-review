@@ -8,8 +8,9 @@ let bufferLoadPromise: Promise<AudioBuffer | null> | null = null
 let pendingChime = false
 let pendingChimeTimer: ReturnType<typeof setTimeout> | null = null
 let keepaliveInterval: ReturnType<typeof setInterval> | null = null
+let primingPromise: Promise<boolean> | null = null
 
-const PENDING_TTL_MS = 60_000
+const PENDING_TTL_MS = 10_000
 const AUDIO_SRC = '/tng_chime_1.5sec.wav'
 const KEEPALIVE_INTERVAL_MS = 25_000
 
@@ -154,28 +155,49 @@ export function stopKeepalive(): void {
   }
 }
 
-export async function primeAudio(): Promise<boolean> {
-  if (primed) return true
-  const ctx = ensureAudioContext()
-  if (!ctx) return false
-
-  if (ctx.state === 'suspended') {
-    await ctx.resume().catch(() => {})
+function playSilentTest(): boolean {
+  if (!audioCtx || audioCtx.state !== 'running') return false
+  try {
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    gain.gain.value = 0
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.start()
+    osc.stop(audioCtx.currentTime + 0.001)
+    return true
+  } catch {
+    return false
   }
-  unlocked = true
+}
 
-  await loadBuffer()
+export function primeAudio(): Promise<boolean> {
+  if (primed) return Promise.resolve(true)
+  if (primingPromise) return primingPromise
 
-  let played = playViaWebAudio()
-  if (!played) {
-    played = await playViaFallback()
-  }
+  primingPromise = (async () => {
+    const ctx = ensureAudioContext()
+    if (!ctx) return false
 
-  if (played) {
-    primed = true
-    startKeepalive()
-  }
-  return played
+    if (ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {})
+    }
+    unlocked = true
+
+    await loadBuffer()
+    ensureFallbackAudio()
+
+    const ok = playSilentTest()
+    if (ok) {
+      primed = true
+      startKeepalive()
+    }
+    return ok
+  })().finally(() => {
+    primingPromise = null
+  })
+
+  return primingPromise
 }
 
 export function isPrimed(): boolean {

@@ -6,7 +6,7 @@ import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
 import { isOverdue } from '../utils/time'
-import { playChime, unlockAudio, flushPendingChime, isAudioUnlocked, preWarmAudio, primeAudio, stopKeepalive } from '../utils/notificationSound'
+import { playChime, unlockAudio, isAudioUnlocked, preWarmAudio, primeAudio, isPrimed, stopKeepalive } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
 import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -79,6 +79,7 @@ function DashboardPage() {
   soundEnabledRef.current = soundEnabled
 
   const audioUnlockReportedRef = useRef(false)
+  const overdueNotifiedRef = useRef(new Set<number>())
 
   const reportAudioUnlocked = useCallback(() => {
     if (audioUnlockReportedRef.current) return
@@ -129,6 +130,7 @@ function DashboardPage() {
 
     for (const item of currentItems) {
       const prId = item.id as number
+      if (overdueNotifiedRef.current.has(prId)) continue
       const oldTs = currentTimestamps[prId]
       if (!oldTs) continue
       if (isOverdue(oldTs)) continue
@@ -136,6 +138,7 @@ function DashboardPage() {
       if (isOverdue(newTs) && !notifyPrIds.includes(prId)) {
         const pr = mapItem(item)
         notifyPrIds.push(prId)
+        overdueNotifiedRef.current.add(prId)
         messages.push({ prId, text: `${pr.repository.full_name}: ${pr.title} (now 24h+)` })
       }
     }
@@ -156,6 +159,9 @@ function DashboardPage() {
 
     if (result.removedPRIds.length > 0) {
       const removedSet = new Set(result.removedPRIds)
+      for (const id of result.removedPRIds) {
+        overdueNotifiedRef.current.delete(id)
+      }
       setReviewRequestedItems(prev =>
         prev.filter(item => !removedSet.has(item.id as number))
       )
@@ -229,29 +235,37 @@ function DashboardPage() {
 
   useEffect(() => {
     preWarmAudio()
+    let gestureCleanedUp = false
 
-    const tryUnlock = () => {
-      if (soundEnabledRef.current) {
-        unlockAudio()
-        if (isAudioUnlocked()) {
-          reportAudioUnlocked()
-        }
-      }
+    const removeGestureListeners = () => {
+      if (gestureCleanedUp) return
+      gestureCleanedUp = true
+      document.removeEventListener('pointerdown', handleGesture)
+      document.removeEventListener('keydown', handleGesture)
+      document.removeEventListener('touchstart', handleGesture)
+      window.removeEventListener('focus', handleGesture)
     }
 
     const handleGesture = () => {
-      tryUnlock()
+      if (isPrimed()) {
+        removeGestureListeners()
+        return
+      }
       if (soundEnabledRef.current) {
-        primeAudio().then(played => {
-          if (played) reportAudioUnlocked()
+        unlockAudio()
+        primeAudio().then(ok => {
+          if (ok) {
+            reportAudioUnlocked()
+            removeGestureListeners()
+          }
         })
       }
     }
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        tryUnlock()
-        flushPendingChime()
+      if (document.visibilityState === 'visible' && soundEnabledRef.current) {
+        unlockAudio()
+        if (isAudioUnlocked()) reportAudioUnlocked()
       }
     }
 
@@ -272,10 +286,7 @@ function DashboardPage() {
     }
 
     return () => {
-      document.removeEventListener('pointerdown', handleGesture)
-      document.removeEventListener('keydown', handleGesture)
-      document.removeEventListener('touchstart', handleGesture)
-      window.removeEventListener('focus', handleGesture)
+      removeGestureListeners()
       document.removeEventListener('visibilitychange', handleVisibility)
       stopKeepalive()
     }
