@@ -88,8 +88,7 @@ function LandingPage() {
 
           <h1 className="hero-title">GitHub Review Dashboard</h1>
           <p className="hero-description">
-            Stay on top of your code reviews. See all pull requests where your review is requested,
-            organized by organization.
+            Stay on top of your code reviews.
           </p>
 
           <button
