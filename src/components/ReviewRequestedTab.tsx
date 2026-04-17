@@ -49,11 +49,11 @@ interface ReviewRequestedTabProps {
   highlightedPRIds: Set<number>
 }
 
-const HIDE_CO_KEY = 'hide-codeowners-satisfied'
+const TEAM_APPROVAL_KEY = 'team-approval-required-filter'
 
-function readHideCodeowners(): boolean {
+function readTeamApprovalFilter(): boolean {
   try {
-    return localStorage.getItem(HIDE_CO_KEY) === 'true'
+    return localStorage.getItem(TEAM_APPROVAL_KEY) === 'true'
   } catch {
     return false
   }
@@ -68,13 +68,13 @@ function ReviewRequestedTab({
   highlightedPRIds,
 }: ReviewRequestedTabProps) {
   const [showDrafts, setShowDrafts] = useState(false)
-  const [hideCodeownersSatisfied, setHideCodeownersSatisfied] = useState(readHideCodeowners)
+  const [teamApprovalOnly, setTeamApprovalOnly] = useState(readTeamApprovalFilter)
 
-  const toggleHideCodeowners = () => {
-    setHideCodeownersSatisfied(prev => {
+  const toggleTeamApproval = () => {
+    setTeamApprovalOnly(prev => {
       const next = !prev
       try {
-        localStorage.setItem(HIDE_CO_KEY, String(next))
+        localStorage.setItem(TEAM_APPROVAL_KEY, String(next))
       } catch {
         // storage unavailable
       }
@@ -90,8 +90,8 @@ function ReviewRequestedTab({
   })
 
   const afterDraftFilter = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
-  const reviewPRs = hideCodeownersSatisfied
-    ? afterDraftFilter.filter(pr => pr.codeowners_satisfied !== true)
+  const reviewPRs = teamApprovalOnly
+    ? afterDraftFilter.filter(pr => pr.team_approval_required !== false)
     : afterDraftFilter
 
   const urgencyGroups = groupByUrgency(reviewPRs)
@@ -136,13 +136,13 @@ function ReviewRequestedTab({
           </button>
         </label>
         <label className="drafts-toggle">
-          <span className="drafts-toggle-label">Hide CODEOWNERS satisfied</span>
+          <span className="drafts-toggle-label">Team Approval Required</span>
           <button
             type="button"
             role="switch"
-            aria-checked={hideCodeownersSatisfied}
-            className={`toggle-switch ${hideCodeownersSatisfied ? 'toggle-switch-on' : ''}`}
-            onClick={toggleHideCodeowners}
+            aria-checked={teamApprovalOnly}
+            className={`toggle-switch ${teamApprovalOnly ? 'toggle-switch-on' : ''}`}
+            onClick={toggleTeamApproval}
           >
             <span className="toggle-knob" />
           </button>

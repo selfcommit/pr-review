@@ -76,6 +76,135 @@ async function fetchUserOrgs(accessToken: string): Promise<OrgInfo[]> {
   }));
 }
 
+const TEAMS_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+interface TeamInfo {
+  slug: string;
+  name: string;
+  id: number | null;
+  org_login: string;
+}
+
+async function fetchUserTeams(accessToken: string): Promise<TeamInfo[]> {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/vnd.github.v3+json",
+  };
+
+  const teams: TeamInfo[] = [];
+  let page = 1;
+
+  while (page <= 10) {
+    const resp = await fetch(
+      `https://api.github.com/user/teams?per_page=100&page=${page}`,
+      { headers }
+    );
+
+    if (!resp.ok) {
+      console.error("[fetchUserTeams] failed:", resp.status);
+      break;
+    }
+
+    const items = await resp.json();
+    if (!Array.isArray(items) || items.length === 0) break;
+
+    for (const t of items) {
+      teams.push({
+        slug: t.slug,
+        name: t.name || t.slug,
+        id: t.id ?? null,
+        org_login: t.organization?.login || "",
+      });
+    }
+
+    if (items.length < 100) break;
+    page++;
+  }
+
+  return teams;
+}
+
+async function syncUserTeams(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  accessToken: string
+) {
+  const teams = await fetchUserTeams(accessToken);
+
+  for (const team of teams) {
+    await supabase.from("user_teams").upsert(
+      {
+        github_user_id: githubUserId,
+        org_login: team.org_login,
+        team_slug: team.slug,
+        team_name: team.name,
+        team_id: team.id,
+        last_synced_at: new Date().toISOString(),
+      },
+      { onConflict: "github_user_id,org_login,team_slug" }
+    );
+  }
+
+  const teamKeys = new Set(
+    teams.map((t) => `${t.org_login.toLowerCase()}/${t.slug.toLowerCase()}`)
+  );
+  const { data: existing } = await supabase
+    .from("user_teams")
+    .select("id, org_login, team_slug")
+    .eq("github_user_id", githubUserId);
+
+  if (existing) {
+    const toRemove = existing.filter(
+      (e: { org_login: string; team_slug: string }) =>
+        !teamKeys.has(
+          `${e.org_login.toLowerCase()}/${e.team_slug.toLowerCase()}`
+        )
+    );
+    for (const r of toRemove) {
+      await supabase.from("user_teams").delete().eq("id", r.id);
+    }
+  }
+
+  await supabase
+    .from("app_users")
+    .update({ teams_last_synced_at: new Date().toISOString() })
+    .eq("github_user_id", githubUserId);
+
+  console.log(
+    `[syncUserTeams] Synced ${teams.length} team(s) for user ${githubUserId}`
+  );
+}
+
+function ensureUserTeamsFresh(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  accessToken: string,
+  teamsLastSyncedAt: string | null
+) {
+  if (teamsLastSyncedAt) {
+    const elapsed = Date.now() - new Date(teamsLastSyncedAt).getTime();
+    if (elapsed < TEAMS_SYNC_INTERVAL_MS) return;
+  }
+
+  try {
+    // @ts-ignore: EdgeRuntime available in Supabase edge functions
+    if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+      // @ts-ignore
+      EdgeRuntime.waitUntil(
+        syncUserTeams(supabase, githubUserId, accessToken)
+      );
+    } else {
+      syncUserTeams(supabase, githubUserId, accessToken).catch((err) =>
+        console.error("[ensureUserTeamsFresh] background sync failed", err)
+      );
+    }
+  } catch {
+    syncUserTeams(supabase, githubUserId, accessToken).catch((err) =>
+      console.error("[ensureUserTeamsFresh] background sync failed", err)
+    );
+  }
+}
+
 async function syncUserAndOrgs(
   userId: number,
   login: string,
@@ -299,17 +428,54 @@ function snapshotChanged(snap: SnapshotRow, item: GitHubSearchItem): boolean {
   );
 }
 
-async function fetchReviewDecisions(
+interface TeamApprovalResult {
+  team_approval_required: boolean;
+}
+
+async function fetchTeamApprovalStatus(
   accessToken: string,
-  items: GitHubSearchItem[]
-): Promise<Record<number, string | null>> {
-  const result: Record<number, string | null> = {};
+  items: GitHubSearchItem[],
+  userLogin: string,
+  userTeamKeys: Set<string>
+): Promise<Record<number, TeamApprovalResult>> {
+  const result: Record<number, TeamApprovalResult> = {};
   if (items.length === 0) return result;
+
+  const prFragment = `
+    reviewRequests(first: 50) {
+      nodes {
+        requestedReviewer {
+          __typename
+          ... on Team { slug organization { login } }
+          ... on User { login }
+        }
+      }
+    }
+    latestReviews(first: 50) {
+      nodes {
+        author { login }
+        state
+        onBehalfOf(first: 10) {
+          nodes { slug organization { login } }
+        }
+      }
+    }
+    timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], first: 100) {
+      nodes {
+        ... on ReviewRequestedEvent {
+          requestedReviewer {
+            __typename
+            ... on Team { slug organization { login } }
+          }
+        }
+      }
+    }
+  `;
 
   const aliases = items.map((item, idx) => {
     const repoFullName = item.repository_url.split("/").slice(-2).join("/");
     const [owner, repo] = repoFullName.split("/");
-    return `pr${idx}: repository(owner: "${owner}", name: "${repo}") { pullRequest(number: ${item.number}) { id reviewDecision } }`;
+    return `pr${idx}: repository(owner: "${owner}", name: "${repo}") { pullRequest(number: ${item.number}) { id ${prFragment} } }`;
   });
 
   const query = `query { ${aliases.join(" ")} }`;
@@ -326,20 +492,97 @@ async function fetchReviewDecisions(
     });
 
     if (!resp.ok) {
-      console.error("[fetchReviewDecisions] graphql failed", resp.status);
+      console.error("[fetchTeamApprovalStatus] graphql failed", resp.status);
+      for (const item of items) {
+        result[item.id] = { team_approval_required: true };
+      }
       return result;
     }
 
     const data = await resp.json();
-    if (!data || !data.data) return result;
+    if (!data || !data.data) {
+      for (const item of items) {
+        result[item.id] = { team_approval_required: true };
+      }
+      return result;
+    }
 
     items.forEach((item, idx) => {
       const node = data.data[`pr${idx}`];
-      const decision = node?.pullRequest?.reviewDecision ?? null;
-      result[item.id] = decision;
+      const pr = node?.pullRequest;
+      if (!pr) {
+        result[item.id] = { team_approval_required: true };
+        return;
+      }
+
+      const loginLower = userLogin.toLowerCase();
+
+      const individuallyRequested = (pr.reviewRequests?.nodes || []).some(
+        (rr: { requestedReviewer?: { __typename?: string; login?: string } }) =>
+          rr.requestedReviewer?.__typename === "User" &&
+          rr.requestedReviewer?.login?.toLowerCase() === loginLower
+      );
+
+      const pendingTeamKeys = new Set<string>();
+      for (const rr of pr.reviewRequests?.nodes || []) {
+        const rev = rr.requestedReviewer;
+        if (rev?.__typename === "Team" && rev.slug && rev.organization?.login) {
+          const key = `${rev.organization.login.toLowerCase()}/${rev.slug.toLowerCase()}`;
+          pendingTeamKeys.add(key);
+        }
+      }
+
+      const everRequestedTeamKeys = new Set<string>(pendingTeamKeys);
+      for (const tl of pr.timelineItems?.nodes || []) {
+        const rev = tl?.requestedReviewer;
+        if (rev?.__typename === "Team" && rev.slug && rev.organization?.login) {
+          const key = `${rev.organization.login.toLowerCase()}/${rev.slug.toLowerCase()}`;
+          everRequestedTeamKeys.add(key);
+        }
+      }
+
+      const relevantTeams = new Set<string>();
+      for (const key of everRequestedTeamKeys) {
+        if (userTeamKeys.has(key)) relevantTeams.add(key);
+      }
+
+      if (individuallyRequested) {
+        result[item.id] = { team_approval_required: true };
+        return;
+      }
+
+      if (relevantTeams.size === 0) {
+        result[item.id] = { team_approval_required: true };
+        return;
+      }
+
+      const approvedTeamKeys = new Set<string>();
+      for (const review of pr.latestReviews?.nodes || []) {
+        if (review.state === "APPROVED") {
+          for (const behalf of review.onBehalfOf?.nodes || []) {
+            if (behalf.slug && behalf.organization?.login) {
+              const key = `${behalf.organization.login.toLowerCase()}/${behalf.slug.toLowerCase()}`;
+              approvedTeamKeys.add(key);
+            }
+          }
+        }
+      }
+
+      let anyUnapproved = false;
+      for (const teamKey of relevantTeams) {
+        if (!approvedTeamKeys.has(teamKey)) {
+          anyUnapproved = true;
+          break;
+        }
+      }
+
+      result[item.id] = { team_approval_required: anyUnapproved };
     });
   } catch (err) {
-    console.error("[fetchReviewDecisions] error", err);
+    console.error("[fetchTeamApprovalStatus] error", err);
+    for (const item of items) {
+      result[item.id] = { team_approval_required: true };
+    }
   }
 
   return result;
@@ -706,6 +949,14 @@ Deno.serve(async (req: Request) => {
         orgs
       );
 
+      const supabaseForCallback = getSupabaseAdmin();
+      ensureUserTeamsFresh(
+        supabaseForCallback,
+        userData.id,
+        tokenData.access_token,
+        null
+      );
+
       const user = {
         id: userData.id,
         login: userData.login,
@@ -798,13 +1049,32 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
-        .select("github_user_id, access_token, login")
+        .select("github_user_id, access_token, login, teams_last_synced_at")
         .eq("session_token", sessionToken)
         .maybeSingle();
 
       if (!user) {
         return jsonResponse({ error: "Invalid session" }, 401);
       }
+
+      ensureUserTeamsFresh(
+        supabase,
+        user.github_user_id,
+        user.access_token,
+        user.teams_last_synced_at
+      );
+
+      const { data: userTeamRows } = await supabase
+        .from("user_teams")
+        .select("org_login, team_slug")
+        .eq("github_user_id", user.github_user_id);
+
+      const userTeamKeys = new Set<string>(
+        (userTeamRows || []).map(
+          (t: { org_login: string; team_slug: string }) =>
+            `${t.org_login.toLowerCase()}/${t.team_slug.toLowerCase()}`
+        )
+      );
 
       const ghHeaders = {
         Authorization: `Bearer ${user.access_token}`,
@@ -896,20 +1166,19 @@ Deno.serve(async (req: Request) => {
       }
 
       if (reviewReqResult.items && Array.isArray(reviewReqResult.items)) {
-        const decisions = await fetchReviewDecisions(
+        const approvalStatus = await fetchTeamApprovalStatus(
           user.access_token,
-          reviewReqResult.items as GitHubSearchItem[]
+          reviewReqResult.items as GitHubSearchItem[],
+          user.login,
+          userTeamKeys
         );
         for (const item of reviewReqResult.items as Array<
           GitHubSearchItem & {
-            review_decision?: string | null;
-            codeowners_satisfied?: boolean | null;
+            team_approval_required?: boolean;
           }
         >) {
-          const decision = decisions[item.id] ?? null;
-          item.review_decision = decision;
-          item.codeowners_satisfied =
-            decision === null ? null : decision === "APPROVED";
+          const status = approvalStatus[item.id];
+          item.team_approval_required = status?.team_approval_required ?? true;
         }
       }
 

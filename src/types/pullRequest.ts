@@ -17,8 +17,7 @@ export interface PullRequest {
   }
   draft: boolean
   review_requested_at?: string
-  review_decision?: string | null
-  codeowners_satisfied?: boolean | null
+  team_approval_required?: boolean
 }
 
 export interface OrgPRs {
@@ -49,9 +48,8 @@ export function mapItem(item: Record<string, unknown>): PullRequest {
       avatar_url: itemUser.avatar_url || '',
     },
     draft: (item.draft as boolean) || false,
-    review_decision: (item.review_decision as string | null | undefined) ?? null,
-    codeowners_satisfied:
-      (item.codeowners_satisfied as boolean | null | undefined) ?? null,
+    team_approval_required:
+      (item.team_approval_required as boolean | undefined) ?? undefined,
   }
 }
 
