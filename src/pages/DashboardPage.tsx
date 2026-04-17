@@ -78,7 +78,6 @@ function DashboardPage() {
   const soundEnabledRef = useRef(soundEnabled)
   soundEnabledRef.current = soundEnabled
 
-  const hasPlayedRefreshCompleteChimeRef = useRef(false)
   const audioUnlockReportedRef = useRef(false)
 
   const reportAudioUnlocked = useCallback(() => {
@@ -357,11 +356,9 @@ function DashboardPage() {
       setLoading(true)
     }
 
-    let refreshSucceeded = false
     try {
       const data = await apiGet<PullRequestsPayload>('pull-requests')
       applyPullRequestsData(data)
-      refreshSucceeded = true
     } catch (err) {
       if (err instanceof Error && err.message === 'Session expired') {
         return
@@ -374,12 +371,6 @@ function DashboardPage() {
       setRefreshing(false)
       resumePolling()
 
-      if (refreshSucceeded && soundEnabledRef.current && isAudioUnlocked()) {
-        hasPlayedRefreshCompleteChimeRef.current = true
-        playChime().then(ok => {
-          if (ok) reportAudioUnlocked()
-        })
-      }
     }
   }
 
