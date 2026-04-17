@@ -140,7 +140,7 @@ function ReviewRequestedTab({
         </label>
         <label className="drafts-toggle">
           <span className="drafts-toggle-label">
-            Team Approved{teamApprovedCount > 0 ? ` (${teamApprovedCount})` : ''}
+            Show Team Reviewed{teamApprovedCount > 0 ? ` (${teamApprovedCount})` : ''}
           </span>
           <button
             type="button"
