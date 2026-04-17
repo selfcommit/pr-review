@@ -28,6 +28,9 @@ export function unlockAudio(): void {
 }
 
 export function playChime(): void {
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {})
+  }
   if (audioCtx && audioBuffer && audioCtx.state === 'running') {
     try {
       const source = audioCtx.createBufferSource()

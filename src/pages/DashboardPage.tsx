@@ -6,7 +6,7 @@ import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
 import { isOverdue } from '../utils/time'
-import { playChime } from '../utils/notificationSound'
+import { playChime, unlockAudio } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
 import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -212,6 +212,22 @@ function DashboardPage() {
     window.addEventListener('message', handleOAuthMessage)
     return () => window.removeEventListener('message', handleOAuthMessage)
   }, [handleOAuthMessage])
+
+  useEffect(() => {
+    const handleFirstGesture = () => {
+      if (soundEnabledRef.current) {
+        unlockAudio()
+      }
+      document.removeEventListener('pointerdown', handleFirstGesture)
+      document.removeEventListener('keydown', handleFirstGesture)
+    }
+    document.addEventListener('pointerdown', handleFirstGesture)
+    document.addEventListener('keydown', handleFirstGesture)
+    return () => {
+      document.removeEventListener('pointerdown', handleFirstGesture)
+      document.removeEventListener('keydown', handleFirstGesture)
+    }
+  }, [])
 
   type PullRequestsPayload = {
     reviewRequested?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
