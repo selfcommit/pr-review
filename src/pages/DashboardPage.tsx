@@ -176,7 +176,7 @@ function DashboardPage() {
 
   const { pause: pausePolling, resume: resumePolling } = usePolling({
     enabled: pollingEnabled,
-    intervalMs: 30000,
+    intervalMs: 5000,
     onChanges: handlePollChanges,
   })
 
