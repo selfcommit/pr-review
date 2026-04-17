@@ -2,13 +2,16 @@ let audioCtx: AudioContext | null = null
 let audioBuffer: AudioBuffer | null = null
 let fallbackAudio: HTMLAudioElement | null = null
 let unlocked = false
+let primed = false
 let bufferLoading = false
 let bufferLoadPromise: Promise<AudioBuffer | null> | null = null
 let pendingChime = false
 let pendingChimeTimer: ReturnType<typeof setTimeout> | null = null
+let keepaliveInterval: ReturnType<typeof setInterval> | null = null
 
 const PENDING_TTL_MS = 60_000
 const AUDIO_SRC = '/tng_chime_1.5sec.wav'
+const KEEPALIVE_INTERVAL_MS = 25_000
 
 function ensureFallbackAudio(): HTMLAudioElement | null {
   if (fallbackAudio) return fallbackAudio
@@ -65,10 +68,10 @@ export function preWarmAudio(): void {
   ensureFallbackAudio()
 }
 
-export function unlockAudio(): void {
+export async function unlockAudio(): Promise<void> {
   const ctx = ensureAudioContext()
   if (ctx && ctx.state === 'suspended') {
-    ctx.resume().catch(() => {})
+    await ctx.resume().catch(() => {})
   }
   if (ctx) {
     unlocked = true
@@ -127,49 +130,105 @@ function clearPendingChime(): void {
   }
 }
 
-export function playChime(): void {
-  const ctx = ensureAudioContext()
-  if (ctx && ctx.state === 'suspended') {
-    ctx.resume().catch(() => {})
-  }
-
-  if (playViaWebAudio()) return
-
-  if (ctx && !audioBuffer) {
-    loadBuffer().then(buf => {
-      if (buf && playViaWebAudio()) return
-      playViaFallback().then(ok => {
-        if (!ok) queuePendingChime()
-      })
-    })
-    playViaFallback().then(ok => {
-      if (ok) clearPendingChime()
-    })
-    return
-  }
-
-  playViaFallback().then(ok => {
-    if (!ok) {
-      queuePendingChime()
-    } else {
-      clearPendingChime()
-    }
-  })
+function startKeepalive(): void {
+  if (keepaliveInterval) return
+  if (!audioCtx) return
+  keepaliveInterval = setInterval(() => {
+    if (!audioCtx || audioCtx.state !== 'running') return
+    try {
+      const osc = audioCtx.createOscillator()
+      const gain = audioCtx.createGain()
+      gain.gain.value = 0.001
+      osc.connect(gain)
+      gain.connect(audioCtx.destination)
+      osc.start()
+      osc.stop(audioCtx.currentTime + 0.002)
+    } catch {}
+  }, KEEPALIVE_INTERVAL_MS)
 }
 
-export function flushPendingChime(): void {
+export function stopKeepalive(): void {
+  if (keepaliveInterval) {
+    clearInterval(keepaliveInterval)
+    keepaliveInterval = null
+  }
+}
+
+export async function primeAudio(): Promise<boolean> {
+  if (primed) return true
+  const ctx = ensureAudioContext()
+  if (!ctx) return false
+
+  if (ctx.state === 'suspended') {
+    await ctx.resume().catch(() => {})
+  }
+  unlocked = true
+
+  await loadBuffer()
+
+  let played = playViaWebAudio()
+  if (!played) {
+    played = await playViaFallback()
+  }
+
+  if (played) {
+    primed = true
+    startKeepalive()
+  }
+  return played
+}
+
+export function isPrimed(): boolean {
+  return primed
+}
+
+export async function playChime(): Promise<boolean> {
+  const ctx = ensureAudioContext()
+  if (ctx && ctx.state === 'suspended') {
+    await ctx.resume().catch(() => {})
+  }
+
+  if (playViaWebAudio()) {
+    clearPendingChime()
+    return true
+  }
+
+  if (ctx && !audioBuffer) {
+    const buf = await loadBuffer()
+    if (buf && playViaWebAudio()) {
+      clearPendingChime()
+      return true
+    }
+    const ok = await playViaFallback()
+    if (ok) {
+      clearPendingChime()
+      return true
+    }
+    queuePendingChime()
+    return false
+  }
+
+  const ok = await playViaFallback()
+  if (ok) {
+    clearPendingChime()
+    return true
+  }
+  queuePendingChime()
+  return false
+}
+
+export async function flushPendingChime(): Promise<void> {
   if (!pendingChime) return
   const ctx = ensureAudioContext()
   if (ctx && ctx.state === 'suspended') {
-    ctx.resume().catch(() => {})
+    await ctx.resume().catch(() => {})
   }
   if (playViaWebAudio()) {
     clearPendingChime()
     return
   }
-  playViaFallback().then(ok => {
-    if (ok) clearPendingChime()
-  })
+  const ok = await playViaFallback()
+  if (ok) clearPendingChime()
 }
 
 export function isAudioUnlocked(): boolean {

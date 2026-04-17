@@ -14,7 +14,7 @@ interface PollResult {
 interface UsePollingOptions {
   enabled: boolean
   intervalMs?: number
-  onChanges: (result: PollResult) => void
+  onChanges: (result: PollResult) => void | Promise<void>
 }
 
 export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollingOptions) {

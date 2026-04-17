@@ -6,7 +6,7 @@ import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
 import { isOverdue } from '../utils/time'
-import { playChime, unlockAudio, flushPendingChime, isAudioUnlocked, preWarmAudio } from '../utils/notificationSound'
+import { playChime, unlockAudio, flushPendingChime, isAudioUnlocked, preWarmAudio, primeAudio, stopKeepalive } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
 import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -108,7 +108,7 @@ function DashboardPage() {
     }, 2500)
   }, [])
 
-  const handlePollChanges = useCallback((result: {
+  const handlePollChanges = useCallback(async (result: {
     updatedPRs: Array<Record<string, unknown>>
     removedPRIds: number[]
     newPRs: Array<Record<string, unknown>>
@@ -167,10 +167,12 @@ function DashboardPage() {
     }
 
     if (notifyPrIds.length > 0) {
+      let chimeSucceeded = false
       if (soundEnabledRef.current) {
-        playChime()
-        reportAudioUnlocked()
+        chimeSucceeded = await playChime()
+        if (chimeSucceeded) reportAudioUnlocked()
       }
+      const silent = soundEnabledRef.current ? chimeSucceeded : true
       const title = messages.length === 1
         ? 'New review request'
         : `${messages.length} review requests need attention`
@@ -179,7 +181,7 @@ function DashboardPage() {
       sendBrowserNotification(title, body, () => {
         triggerHighlight([firstPrId])
         scrollToPR(firstPrId)
-      }, `review-request-${firstPrId}`)
+      }, `review-request-${firstPrId}`, silent)
       triggerHighlight(notifyPrIds)
       setToastMessages(messages)
       setTimeout(() => scrollToPR(notifyPrIds[0]), 100)
@@ -240,6 +242,11 @@ function DashboardPage() {
 
     const handleGesture = () => {
       tryUnlock()
+      if (soundEnabledRef.current) {
+        primeAudio().then(played => {
+          if (played) reportAudioUnlocked()
+        })
+      }
     }
 
     const handleVisibility = () => {
@@ -271,6 +278,7 @@ function DashboardPage() {
       document.removeEventListener('touchstart', handleGesture)
       window.removeEventListener('focus', handleGesture)
       document.removeEventListener('visibilitychange', handleVisibility)
+      stopKeepalive()
     }
   }, [reportAudioUnlocked])
 
@@ -366,10 +374,11 @@ function DashboardPage() {
       setRefreshing(false)
       resumePolling()
 
-      if (refreshSucceeded && soundEnabledRef.current) {
+      if (refreshSucceeded && soundEnabledRef.current && isAudioUnlocked()) {
         hasPlayedRefreshCompleteChimeRef.current = true
-        playChime()
-        setTimeout(() => reportAudioUnlocked(), 250)
+        playChime().then(ok => {
+          if (ok) reportAudioUnlocked()
+        })
       }
     }
   }
