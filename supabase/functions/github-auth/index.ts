@@ -1279,6 +1279,18 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ error: "Invalid session" }, 401);
       }
 
+      const { data: userTeamRows } = await supabase
+        .from("user_teams")
+        .select("org_login, team_slug")
+        .eq("github_user_id", user.github_user_id);
+
+      const userTeamKeys = new Set<string>(
+        (userTeamRows || []).map(
+          (t: { org_login: string; team_slug: string }) =>
+            `${t.org_login.toLowerCase()}/${t.team_slug.toLowerCase()}`
+        )
+      );
+
       const ghHeaders = {
         Authorization: `Bearer ${user.access_token}`,
         Accept: "application/vnd.github.v3+json",
@@ -1385,6 +1397,26 @@ Deno.serve(async (req: Request) => {
 
       if (changed) {
         await syncSnapshots(supabase, user.github_user_id, freshItems);
+      }
+
+      const itemsNeedingApproval = [...newItems, ...updatedItems];
+      if (itemsNeedingApproval.length > 0) {
+        const approvalStatus = await fetchTeamApprovalStatus(
+          user.access_token,
+          itemsNeedingApproval,
+          user.login,
+          userTeamKeys
+        );
+        const applyApproval = (item: GitHubSearchItem & { team_approval_required?: boolean }) => {
+          const status = approvalStatus[item.id];
+          item.team_approval_required = status?.team_approval_required ?? true;
+        };
+        for (const item of newItems as Array<GitHubSearchItem & { team_approval_required?: boolean }>) {
+          applyApproval(item);
+        }
+        for (const item of updatedItems as Array<GitHubSearchItem & { team_approval_required?: boolean }>) {
+          applyApproval(item);
+        }
       }
 
       return jsonResponse({

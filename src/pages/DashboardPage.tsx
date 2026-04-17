@@ -135,7 +135,10 @@ function DashboardPage() {
     if (result.updatedPRs.length > 0) {
       const updatedMap = new Map(result.updatedPRs.map(pr => [pr.id as number, pr]))
       setReviewRequestedItems(prev =>
-        prev.map(item => updatedMap.get(item.id as number) || item)
+        prev.map(item => {
+          const update = updatedMap.get(item.id as number)
+          return update ? { ...item, ...update } : item
+        })
       )
     }
 
