@@ -1137,61 +1137,63 @@ Deno.serve(async (req: Request) => {
       const oauthScopes =
         reviewReqResp.headers.get("X-OAuth-Scopes") || null;
 
-      let reviewTimestamps: Record<number, string> = {};
+      const reviewReqItems: GitHubSearchItem[] =
+        reviewReqResult.items && Array.isArray(reviewReqResult.items)
+          ? (reviewReqResult.items as GitHubSearchItem[])
+          : [];
+      const reviewedItemsArr: GitHubSearchItem[] =
+        reviewedResult.items && Array.isArray(reviewedResult.items)
+          ? (reviewedResult.items as GitHubSearchItem[])
+          : [];
 
-      if (reviewReqResult.items && Array.isArray(reviewReqResult.items)) {
-        const prItems = reviewReqResult.items.map(
-          (item: { id: number; number: number; repository_url: string }) => ({
-            id: item.id,
-            number: item.number,
-            repoFullName: item.repository_url.split("/").slice(-2).join("/"),
-          })
-        );
+      const prItems = reviewReqItems.map((item) => ({
+        id: item.id,
+        number: item.number,
+        repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+      }));
 
-        reviewTimestamps = await resolveReviewTimestamps(
-          supabase,
-          user.github_user_id,
-          user.access_token,
-          user.login,
-          prItems
-        );
+      const [timestampsResult, , , approvalStatusResult] = await Promise.all([
+        prItems.length > 0
+          ? resolveReviewTimestamps(
+              supabase,
+              user.github_user_id,
+              user.access_token,
+              user.login,
+              prItems
+            )
+          : Promise.resolve({} as Record<number, string>),
+        reviewReqItems.length > 0
+          ? syncSnapshots(supabase, user.github_user_id, reviewReqItems)
+          : Promise.resolve(),
+        reviewedItemsArr.length > 0
+          ? syncPrReviewsForItems(
+              supabase,
+              user.github_user_id,
+              user.access_token,
+              reviewedItemsArr
+            )
+          : Promise.resolve(),
+        reviewReqItems.length > 0
+          ? fetchTeamApprovalStatus(
+              user.access_token,
+              reviewReqItems,
+              user.login,
+              userTeamKeys
+            )
+          : Promise.resolve({} as Record<number, TeamApprovalResult>),
+      ]);
+
+      const reviewTimestamps: Record<number, string> = timestampsResult;
+      const approvalStatus = approvalStatusResult;
+
+      for (const item of reviewReqItems as Array<
+        GitHubSearchItem & { team_approval_required?: boolean }
+      >) {
+        const status = approvalStatus[item.id];
+        item.team_approval_required = status?.team_approval_required ?? true;
       }
 
-      if (reviewReqResult.items && Array.isArray(reviewReqResult.items)) {
-        await syncSnapshots(
-          supabase,
-          user.github_user_id,
-          reviewReqResult.items as GitHubSearchItem[]
-        );
-      }
-
-      if (reviewedResult.items && Array.isArray(reviewedResult.items)) {
-        await syncPrReviewsForItems(
-          supabase,
-          user.github_user_id,
-          user.access_token,
-          reviewedResult.items as GitHubSearchItem[]
-        );
-      }
-
-      if (reviewReqResult.items && Array.isArray(reviewReqResult.items)) {
-        const approvalStatus = await fetchTeamApprovalStatus(
-          user.access_token,
-          reviewReqResult.items as GitHubSearchItem[],
-          user.login,
-          userTeamKeys
-        );
-        for (const item of reviewReqResult.items as Array<
-          GitHubSearchItem & {
-            team_approval_required?: boolean;
-          }
-        >) {
-          const status = approvalStatus[item.id];
-          item.team_approval_required = status?.team_approval_required ?? true;
-        }
-      }
-
-      return jsonResponse({
+      const responsePayload = {
         reviewRequested: reviewReqResult,
         reviewed: reviewedResult,
         reviewTimestamps,
@@ -1199,6 +1201,71 @@ Deno.serve(async (req: Request) => {
         rateLimitRemaining,
         rateLimitReset,
         oauthScopes,
+      };
+
+      const cacheWrite = supabase
+        .from("user_pr_cache")
+        .upsert(
+          {
+            github_user_id: user.github_user_id,
+            payload: responsePayload,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "github_user_id" }
+        )
+        .then(() => {})
+        .catch((err: unknown) =>
+          console.error("[pull-requests] cache write failed", err)
+        );
+
+      try {
+        // @ts-ignore: EdgeRuntime available in Supabase edge functions
+        if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+          // @ts-ignore
+          EdgeRuntime.waitUntil(cacheWrite);
+        } else {
+          await cacheWrite;
+        }
+      } catch {
+        await cacheWrite;
+      }
+
+      return jsonResponse(responsePayload);
+    }
+
+    if (path === "pull-requests-cached") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      const { data: row } = await supabase
+        .from("user_pr_cache")
+        .select("payload, updated_at")
+        .eq("github_user_id", user.github_user_id)
+        .maybeSingle();
+
+      if (!row) {
+        return jsonResponse({ cached: false });
+      }
+
+      return jsonResponse({
+        cached: true,
+        updatedAt: row.updated_at,
+        ...(row.payload as Record<string, unknown>),
       });
     }
 

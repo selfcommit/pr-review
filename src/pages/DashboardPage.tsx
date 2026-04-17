@@ -56,6 +56,7 @@ function DashboardPage() {
   const [reviewedItems, setReviewedItems] = useState<Array<Record<string, unknown>>>([])
   const [reviewTimestamps, setReviewTimestamps] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<DebugInfo | null>(null)
   const [debugOpen, setDebugOpen] = useState(false)
@@ -193,7 +194,7 @@ function DashboardPage() {
       setCachedUser(parsed)
       sessionStorage.removeItem('github_oauth_state')
       setUser(parsed)
-      fetchPullRequests()
+      loadPullRequests()
       fetchOrgs()
     }
   }, [fetchOrgs])
@@ -203,7 +204,7 @@ function DashboardPage() {
     if (cached) {
       setUser(cached)
     }
-    fetchPullRequests()
+    loadPullRequests()
     fetchOrgs()
   }, [fetchOrgs])
 
@@ -212,72 +213,99 @@ function DashboardPage() {
     return () => window.removeEventListener('message', handleOAuthMessage)
   }, [handleOAuthMessage])
 
-  const fetchPullRequests = async () => {
+  type PullRequestsPayload = {
+    reviewRequested?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
+    reviewed?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
+    reviewTimestamps?: Record<number, string> | null
+    username: string
+    rateLimitRemaining: string | null
+    rateLimitReset: string | null
+    oauthScopes: string | null
+  }
+
+  const applyPullRequestsData = (data: PullRequestsPayload) => {
+    const emptyResult: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } = { items: [], total_count: 0 }
+    const reviewRequested = data.reviewRequested || emptyResult
+    const reviewed = data.reviewed || emptyResult
+
+    const queries = [
+      { query: 'is:open is:pr user-review-requested:@me', result: reviewRequested },
+      { query: 'is:pr reviewed-by:@me sort:updated-desc', result: reviewed },
+    ]
+
+    const queryDebugInfos: QueryDebugInfo[] = queries.map((q, i) => ({
+      query: q.query,
+      status: q.result.message ? 422 : 200,
+      totalCount: q.result.total_count ?? null,
+      itemsReturned: q.result.items ? q.result.items.length : null,
+      message: (q.result.message as string) || null,
+      rateLimitRemaining: i === 0 ? data.rateLimitRemaining : null,
+      rateLimitReset: i === 0 ? data.rateLimitReset : null,
+    }))
+
+    setDebugInfo({
+      timestamp: new Date().toISOString(),
+      username: data.username,
+      queries: queryDebugInfos,
+      oauthScopes: data.oauthScopes,
+    })
+
+    for (const q of queries) {
+      if (q.result.message && !q.result.items) {
+        throw new Error(q.result.message as string)
+      }
+    }
+
+    setReviewRequestedItems(Array.isArray(reviewRequested.items) ? reviewRequested.items : [])
+    setReviewedItems(Array.isArray(reviewed.items) ? reviewed.items : [])
+    setReviewTimestamps(data.reviewTimestamps || {})
+  }
+
+  const loadPullRequests = async () => {
+    if (!getSessionToken()) {
+      navigate('/')
+      return
+    }
+
+    pausePolling()
+    setError(null)
+
+    let renderedFromCache = false
     try {
-      pausePolling()
+      const cached = await apiGet<PullRequestsPayload & { cached?: boolean }>('pull-requests-cached')
+      if (cached && cached.cached) {
+        applyPullRequestsData(cached)
+        setLoading(false)
+        renderedFromCache = true
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === 'Session expired') return
+    }
+
+    if (renderedFromCache) {
+      setRefreshing(true)
+    } else {
       setLoading(true)
-      setError(null)
+    }
 
-      if (!getSessionToken()) {
-        navigate('/')
-        return
-      }
-
-      const data = await apiGet<{
-        reviewRequested?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
-        reviewed?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
-        reviewTimestamps?: Record<number, string> | null
-        username: string
-        rateLimitRemaining: string | null
-        rateLimitReset: string | null
-        oauthScopes: string | null
-      }>('pull-requests')
-
-      const emptyResult: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } = { items: [], total_count: 0 }
-      const reviewRequested = data.reviewRequested || emptyResult
-      const reviewed = data.reviewed || emptyResult
-
-      const queries = [
-        { query: 'is:open is:pr user-review-requested:@me', result: reviewRequested },
-        { query: 'is:pr reviewed-by:@me sort:updated-desc', result: reviewed },
-      ]
-
-      const queryDebugInfos: QueryDebugInfo[] = queries.map((q, i) => ({
-        query: q.query,
-        status: q.result.message ? 422 : 200,
-        totalCount: q.result.total_count ?? null,
-        itemsReturned: q.result.items ? q.result.items.length : null,
-        message: (q.result.message as string) || null,
-        rateLimitRemaining: i === 0 ? data.rateLimitRemaining : null,
-        rateLimitReset: i === 0 ? data.rateLimitReset : null,
-      }))
-
-      setDebugInfo({
-        timestamp: new Date().toISOString(),
-        username: data.username,
-        queries: queryDebugInfos,
-        oauthScopes: data.oauthScopes,
-      })
-
-      for (const q of queries) {
-        if (q.result.message && !q.result.items) {
-          throw new Error(q.result.message as string)
-        }
-      }
-
-      setReviewRequestedItems(Array.isArray(reviewRequested.items) ? reviewRequested.items : [])
-      setReviewedItems(Array.isArray(reviewed.items) ? reviewed.items : [])
-      setReviewTimestamps(data.reviewTimestamps || {})
+    try {
+      const data = await apiGet<PullRequestsPayload>('pull-requests')
+      applyPullRequestsData(data)
     } catch (err) {
       if (err instanceof Error && err.message === 'Session expired') {
         return
       }
-      setError(err instanceof Error ? err.message : 'Failed to fetch pull requests')
+      if (!renderedFromCache) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch pull requests')
+      }
     } finally {
       setLoading(false)
+      setRefreshing(false)
       resumePolling()
     }
   }
+
+  const fetchPullRequests = loadPullRequests
 
   const handleSignOut = async () => {
     await logout()
@@ -330,6 +358,12 @@ function DashboardPage() {
             <h1 className="header-title">Review Dashboard</h1>
           </div>
           <div className="header-right">
+            {refreshing && (
+              <div className="refresh-indicator" title="Refreshing from GitHub">
+                <div className="refresh-spinner"></div>
+                <span>Refreshing</span>
+              </div>
+            )}
             {user && (
               <div className="user-info">
                 <img src={user.avatar_url} alt={user.login} className="user-avatar" />
