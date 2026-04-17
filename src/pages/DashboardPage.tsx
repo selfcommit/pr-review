@@ -15,6 +15,7 @@ import ReviewRequestedTab from '../components/ReviewRequestedTab'
 import AssignedTab from '../components/AssignedTab'
 import StatsTab from '../components/StatsTab'
 import NotificationToast from '../components/NotificationToast'
+import NotificationPermissionBanner from '../components/NotificationPermissionBanner'
 import './DashboardPage.css'
 
 interface GitHubUser {
@@ -152,16 +153,16 @@ function DashboardPage() {
     if (notifyPrIds.length > 0) {
       if (soundEnabledRef.current) {
         playChime()
-        const title = messages.length === 1
-          ? 'New review request'
-          : `${messages.length} review requests need attention`
-        const body = messages[0].text + (messages.length > 1 ? ` +${messages.length - 1} more` : '')
-        const firstPrId = notifyPrIds[0]
-        sendBrowserNotification(title, body, () => {
-          triggerHighlight([firstPrId])
-          scrollToPR(firstPrId)
-        })
       }
+      const title = messages.length === 1
+        ? 'New review request'
+        : `${messages.length} review requests need attention`
+      const body = messages[0].text + (messages.length > 1 ? ` +${messages.length - 1} more` : '')
+      const firstPrId = notifyPrIds[0]
+      sendBrowserNotification(title, body, () => {
+        triggerHighlight([firstPrId])
+        scrollToPR(firstPrId)
+      })
       triggerHighlight(notifyPrIds)
       setToastMessages(messages)
       setTimeout(() => scrollToPR(notifyPrIds[0]), 100)
@@ -402,10 +403,13 @@ function DashboardPage() {
               {prSubTab === 'review-requested' && (
                 <>
                   {!loading && !error && (
-                    <OrgAccessBanner
-                      orgAccess={orgAccess}
-                      onSwitchToOrgsTab={() => setActiveTab('organizations')}
-                    />
+                    <>
+                      <OrgAccessBanner
+                        orgAccess={orgAccess}
+                        onSwitchToOrgsTab={() => setActiveTab('organizations')}
+                      />
+                      <NotificationPermissionBanner soundEnabled={soundEnabled} />
+                    </>
                   )}
 
                   {loading ? (

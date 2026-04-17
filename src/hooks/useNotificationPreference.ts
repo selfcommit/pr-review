@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { requestNotificationPermission } from '../utils/browserNotification'
 
 const STORAGE_KEY = 'notification-sound-enabled'
@@ -15,6 +15,12 @@ function readPreference(): boolean {
 
 export function useNotificationPreference() {
   const [soundEnabled, setSoundEnabledState] = useState(readPreference)
+
+  useEffect(() => {
+    if (soundEnabled) {
+      requestNotificationPermission()
+    }
+  }, [])
 
   const setSoundEnabled = useCallback((value: boolean) => {
     setSoundEnabledState(value)

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { PullRequest } from '../types/pullRequest'
 import { groupByOrg, mapItem } from '../types/pullRequest'
 import { isOverdue } from '../utils/time'
-import { playChime } from '../utils/notificationSound'
+import { playChime, unlockAudio } from '../utils/notificationSound'
 import PRCard from './PRCard'
 
 interface UrgencyGroup {
@@ -117,7 +117,10 @@ function ReviewRequestedTab({
             onClick={() => {
               const next = !soundEnabled
               onSoundToggle(next)
-              if (next) playChime()
+              if (next) {
+                unlockAudio()
+                playChime()
+              }
             }}
           >
             <span className="toggle-knob" />

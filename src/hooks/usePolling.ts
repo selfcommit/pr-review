@@ -78,15 +78,10 @@ export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollin
     startInterval()
 
     const handleVisibility = () => {
-      if (document.hidden) {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current)
-          intervalRef.current = null
-        }
-      } else {
+      if (!document.hidden) {
         poll()
-        startInterval()
       }
+      startInterval()
     }
 
     document.addEventListener('visibilitychange', handleVisibility)

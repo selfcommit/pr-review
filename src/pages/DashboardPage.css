@@ -1018,6 +1018,77 @@
   word-break: break-all;
 }
 
+.notification-permission-banner {
+  margin-bottom: 16px;
+  background: rgba(59, 130, 246, 0.06);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.notification-permission-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+
+.notification-permission-banner-icon {
+  color: #60a5fa;
+  flex-shrink: 0;
+}
+
+.notification-permission-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.notification-permission-banner-text {
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.notification-permission-banner-text strong {
+  color: #f87171;
+}
+
+.notification-permission-banner-enable {
+  flex-shrink: 0;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.notification-permission-banner-enable:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.notification-permission-banner-dismiss {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.2s ease;
+}
+
+.notification-permission-banner-dismiss:hover {
+  color: #94a3b8;
+}
+
 @keyframes pr-highlight-pulse {
   0% {
     border-color: rgba(59, 130, 246, 0.8);
