@@ -6,7 +6,7 @@ import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
 import { isOverdue } from '../utils/time'
-import { playChime, unlockAudio, flushPendingChime, isAudioUnlocked } from '../utils/notificationSound'
+import { playChime, unlockAudio, flushPendingChime, isAudioUnlocked, preWarmAudio } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
 import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -227,6 +227,8 @@ function DashboardPage() {
   }, [handleOAuthMessage])
 
   useEffect(() => {
+    preWarmAudio()
+
     const tryUnlock = () => {
       if (soundEnabledRef.current) {
         unlockAudio()
@@ -364,12 +366,7 @@ function DashboardPage() {
       setRefreshing(false)
       resumePolling()
 
-      if (
-        renderedFromCache &&
-        refreshSucceeded &&
-        !hasPlayedRefreshCompleteChimeRef.current &&
-        soundEnabledRef.current
-      ) {
+      if (refreshSucceeded && soundEnabledRef.current) {
         hasPlayedRefreshCompleteChimeRef.current = true
         playChime()
         setTimeout(() => reportAudioUnlocked(), 250)
