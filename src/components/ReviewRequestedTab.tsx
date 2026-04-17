@@ -91,7 +91,7 @@ function ReviewRequestedTab({
   const afterDraftFilter = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
   const teamApprovedCount = afterDraftFilter.filter(pr => pr.team_approval_required === false).length
   const reviewPRs = showTeamApproved
-    ? afterDraftFilter.filter(pr => pr.team_approval_required === false)
+    ? afterDraftFilter
     : afterDraftFilter.filter(pr => pr.team_approval_required !== false)
 
   const urgencyGroups = groupByUrgency(reviewPRs)
@@ -155,8 +155,7 @@ function ReviewRequestedTab({
       </div>
 
       {reviewPRs.length === 0 ? (
-        showTeamApproved ? null : (
-          <div className="empty-state">
+        <div className="empty-state">
             <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10"/>
               <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
@@ -164,7 +163,6 @@ function ReviewRequestedTab({
             <h2>No pending reviews</h2>
             <p>You're all caught up! No pull requests are waiting for your review.</p>
           </div>
-        )
       ) : (
         <div className="urgency-container">
           {urgencyGroups.map(group => (
