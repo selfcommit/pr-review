@@ -546,6 +546,15 @@ async function fetchTeamApprovalStatus(
         if (userTeamKeys.has(key)) relevantTeams.add(key);
       }
 
+      const hasChangesRequested = (pr.latestReviews?.nodes || []).some(
+        (review: { state?: string }) => review.state === "CHANGES_REQUESTED"
+      );
+
+      if (hasChangesRequested) {
+        result[item.id] = { team_approval_required: false };
+        return;
+      }
+
       if (individuallyRequested) {
         result[item.id] = { team_approval_required: true };
         return;
