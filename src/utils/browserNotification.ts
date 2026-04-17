@@ -8,16 +8,17 @@ export function requestNotificationPermission(): void {
 export function sendBrowserNotification(
   title: string,
   body: string,
-  onClick?: () => void
+  onClick?: () => void,
+  tag?: string
 ): void {
   if (!('Notification' in window)) return
   if (Notification.permission !== 'granted') return
-  if (!document.hidden) return
 
   try {
     const notification = new Notification(title, {
       body,
       icon: 'https://github.githubassets.com/favicons/favicon-dark.svg',
+      tag,
     })
 
     notification.onclick = () => {

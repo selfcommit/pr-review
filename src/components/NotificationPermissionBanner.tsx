@@ -69,7 +69,7 @@ function NotificationPermissionBanner({ soundEnabled }: NotificationPermissionBa
             </p>
           ) : (
             <p className="notification-permission-banner-text">
-              Enable desktop notifications to get alerted when new PRs need your review, even when this tab is in the background.
+              Enable desktop notifications to get alerted when new PRs need your review. Banners appear even while this tab is focused.
             </p>
           )}
         </div>

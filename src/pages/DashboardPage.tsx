@@ -165,7 +165,7 @@ function DashboardPage() {
       sendBrowserNotification(title, body, () => {
         triggerHighlight([firstPrId])
         scrollToPR(firstPrId)
-      })
+      }, `review-request-${firstPrId}`)
       triggerHighlight(notifyPrIds)
       setToastMessages(messages)
       setTimeout(() => scrollToPR(notifyPrIds[0]), 100)
