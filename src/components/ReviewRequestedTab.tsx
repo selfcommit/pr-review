@@ -88,6 +88,7 @@ function ReviewRequestedTab({
     return pr
   })
 
+  const draftCount = allReviewPRs.filter(pr => pr.draft).length
   const afterDraftFilter = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
   const teamApprovedCount = afterDraftFilter.filter(pr => pr.team_approval_required === false).length
   const reviewPRs = showTeamApproved
@@ -127,7 +128,9 @@ function ReviewRequestedTab({
           </button>
         </div>
         <label className="drafts-toggle">
-          <span className="drafts-toggle-label">Show Drafts</span>
+          <span className="drafts-toggle-label">
+            Show Drafts{draftCount > 0 ? ` (${draftCount})` : ''}
+          </span>
           <button
             type="button"
             role="switch"
