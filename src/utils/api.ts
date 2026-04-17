@@ -55,7 +55,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   return data;
 }
 
-async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const resp = await fetch(`${AUTH_BASE}/${path}`, {
     method: 'POST',
     headers: authHeaders(),

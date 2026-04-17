@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
 import { usePolling } from '../hooks/usePolling'
 import { useNotificationPreference } from '../hooks/useNotificationPreference'
-import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, getSessionToken } from '../utils/api'
+import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
 import { isOverdue } from '../utils/time'
-import { playChime, unlockAudio } from '../utils/notificationSound'
+import { playChime, unlockAudio, flushPendingChime, isAudioUnlocked } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
 import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -77,6 +77,18 @@ function DashboardPage() {
 
   const soundEnabledRef = useRef(soundEnabled)
   soundEnabledRef.current = soundEnabled
+
+  const hasPlayedRefreshCompleteChimeRef = useRef(false)
+  const audioUnlockReportedRef = useRef(false)
+
+  const reportAudioUnlocked = useCallback(() => {
+    if (audioUnlockReportedRef.current) return
+    if (!isAudioUnlocked()) return
+    audioUnlockReportedRef.current = true
+    apiPost('audio-state', { audio_unlocked: true }).catch(() => {
+      audioUnlockReportedRef.current = false
+    })
+  }, [])
 
   const scrollToPR = useCallback((prId: number) => {
     const el = document.getElementById(`pr-${prId}`)
@@ -157,6 +169,7 @@ function DashboardPage() {
     if (notifyPrIds.length > 0) {
       if (soundEnabledRef.current) {
         playChime()
+        reportAudioUnlocked()
       }
       const title = messages.length === 1
         ? 'New review request'
@@ -171,7 +184,7 @@ function DashboardPage() {
       setToastMessages(messages)
       setTimeout(() => scrollToPR(notifyPrIds[0]), 100)
     }
-  }, [triggerHighlight, scrollToPR])
+  }, [triggerHighlight, scrollToPR, reportAudioUnlocked])
 
   const pollingEnabled = !loading && !error && activeTab === 'pull-requests' && prSubTab === 'review-requested' && !!getSessionToken()
 
@@ -214,20 +227,50 @@ function DashboardPage() {
   }, [handleOAuthMessage])
 
   useEffect(() => {
-    const handleFirstGesture = () => {
+    const tryUnlock = () => {
       if (soundEnabledRef.current) {
         unlockAudio()
+        if (isAudioUnlocked()) {
+          reportAudioUnlocked()
+        }
       }
-      document.removeEventListener('pointerdown', handleFirstGesture)
-      document.removeEventListener('keydown', handleFirstGesture)
     }
-    document.addEventListener('pointerdown', handleFirstGesture)
-    document.addEventListener('keydown', handleFirstGesture)
+
+    const handleGesture = () => {
+      tryUnlock()
+    }
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        tryUnlock()
+        flushPendingChime()
+      }
+    }
+
+    document.addEventListener('pointerdown', handleGesture)
+    document.addEventListener('keydown', handleGesture)
+    document.addEventListener('touchstart', handleGesture, { passive: true })
+    window.addEventListener('focus', handleGesture)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    if (getSessionToken()) {
+      apiGet<{ audio_unlocked: boolean }>('audio-state')
+        .then(state => {
+          if (state?.audio_unlocked && soundEnabledRef.current) {
+            unlockAudio()
+          }
+        })
+        .catch(() => {})
+    }
+
     return () => {
-      document.removeEventListener('pointerdown', handleFirstGesture)
-      document.removeEventListener('keydown', handleFirstGesture)
+      document.removeEventListener('pointerdown', handleGesture)
+      document.removeEventListener('keydown', handleGesture)
+      document.removeEventListener('touchstart', handleGesture)
+      window.removeEventListener('focus', handleGesture)
+      document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [])
+  }, [reportAudioUnlocked])
 
   type PullRequestsPayload = {
     reviewRequested?: { items?: Array<Record<string, unknown>>; total_count?: number; message?: string } | null
@@ -304,9 +347,11 @@ function DashboardPage() {
       setLoading(true)
     }
 
+    let refreshSucceeded = false
     try {
       const data = await apiGet<PullRequestsPayload>('pull-requests')
       applyPullRequestsData(data)
+      refreshSucceeded = true
     } catch (err) {
       if (err instanceof Error && err.message === 'Session expired') {
         return
@@ -318,6 +363,17 @@ function DashboardPage() {
       setLoading(false)
       setRefreshing(false)
       resumePolling()
+
+      if (
+        renderedFromCache &&
+        refreshSucceeded &&
+        !hasPlayedRefreshCompleteChimeRef.current &&
+        soundEnabledRef.current
+      ) {
+        hasPlayedRefreshCompleteChimeRef.current = true
+        playChime()
+        setTimeout(() => reportAudioUnlocked(), 250)
+      }
     }
   }
 

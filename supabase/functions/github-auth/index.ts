@@ -1635,6 +1635,58 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ summary, repos: perRepo });
     }
 
+    if (path === "audio-state") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      if (req.method === "GET") {
+        const { data: state } = await supabase
+          .from("user_audio_state")
+          .select("audio_unlocked, last_unlocked_at")
+          .eq("github_user_id", user.github_user_id)
+          .maybeSingle();
+
+        return jsonResponse({
+          audio_unlocked: state?.audio_unlocked ?? false,
+          last_unlocked_at: state?.last_unlocked_at ?? null,
+        });
+      }
+
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        const audioUnlocked = body?.audio_unlocked === true;
+
+        await supabase.from("user_audio_state").upsert(
+          {
+            github_user_id: user.github_user_id,
+            audio_unlocked: audioUnlocked,
+            last_unlocked_at: audioUnlocked ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "github_user_id" }
+        );
+
+        return jsonResponse({ success: true });
+      }
+
+      return jsonResponse({ error: "Method not allowed" }, 405);
+    }
+
     if (path === "logout") {
       if (req.method !== "POST") {
         return jsonResponse({ error: "Method not allowed" }, 405);
