@@ -49,11 +49,11 @@ interface ReviewRequestedTabProps {
   highlightedPRIds: Set<number>
 }
 
-const TEAM_APPROVAL_KEY = 'team-approval-required-filter'
+const TEAM_APPROVED_KEY = 'team-approved-filter'
 
-function readTeamApprovalFilter(): boolean {
+function readTeamApprovedFilter(): boolean {
   try {
-    return localStorage.getItem(TEAM_APPROVAL_KEY) === 'true'
+    return localStorage.getItem(TEAM_APPROVED_KEY) === 'true'
   } catch {
     return false
   }
@@ -68,15 +68,14 @@ function ReviewRequestedTab({
   highlightedPRIds,
 }: ReviewRequestedTabProps) {
   const [showDrafts, setShowDrafts] = useState(false)
-  const [teamApprovalOnly, setTeamApprovalOnly] = useState(readTeamApprovalFilter)
+  const [showTeamApproved, setShowTeamApproved] = useState(readTeamApprovedFilter)
 
-  const toggleTeamApproval = () => {
-    setTeamApprovalOnly(prev => {
+  const toggleTeamApproved = () => {
+    setShowTeamApproved(prev => {
       const next = !prev
       try {
-        localStorage.setItem(TEAM_APPROVAL_KEY, String(next))
+        localStorage.setItem(TEAM_APPROVED_KEY, String(next))
       } catch {
-        // storage unavailable
       }
       return next
     })
@@ -90,9 +89,10 @@ function ReviewRequestedTab({
   })
 
   const afterDraftFilter = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
-  const reviewPRs = teamApprovalOnly
-    ? afterDraftFilter.filter(pr => pr.team_approval_required !== false)
-    : afterDraftFilter
+  const teamApprovedCount = afterDraftFilter.filter(pr => pr.team_approval_required === false).length
+  const reviewPRs = showTeamApproved
+    ? afterDraftFilter.filter(pr => pr.team_approval_required === false)
+    : afterDraftFilter.filter(pr => pr.team_approval_required !== false)
 
   const urgencyGroups = groupByUrgency(reviewPRs)
   const overdueCount = urgencyGroups.find(g => g.label === 'overdue')?.prs.length || 0
@@ -139,13 +139,15 @@ function ReviewRequestedTab({
           </button>
         </label>
         <label className="drafts-toggle">
-          <span className="drafts-toggle-label">Team Approval Required</span>
+          <span className="drafts-toggle-label">
+            Team Approved{teamApprovedCount > 0 ? ` (${teamApprovedCount})` : ''}
+          </span>
           <button
             type="button"
             role="switch"
-            aria-checked={teamApprovalOnly}
-            className={`toggle-switch ${teamApprovalOnly ? 'toggle-switch-on' : ''}`}
-            onClick={toggleTeamApproval}
+            aria-checked={showTeamApproved}
+            className={`toggle-switch ${showTeamApproved ? 'toggle-switch-on' : ''}`}
+            onClick={toggleTeamApproved}
           >
             <span className="toggle-knob" />
           </button>
@@ -153,14 +155,16 @@ function ReviewRequestedTab({
       </div>
 
       {reviewPRs.length === 0 ? (
-        <div className="empty-state">
-          <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
-          </svg>
-          <h2>No pending reviews</h2>
-          <p>You're all caught up! No pull requests are waiting for your review.</p>
-        </div>
+        showTeamApproved ? null : (
+          <div className="empty-state">
+            <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
+            </svg>
+            <h2>No pending reviews</h2>
+            <p>You're all caught up! No pull requests are waiting for your review.</p>
+          </div>
+        )
       ) : (
         <div className="urgency-container">
           {urgencyGroups.map(group => (
