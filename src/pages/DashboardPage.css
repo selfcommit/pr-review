@@ -1333,6 +1333,13 @@
   color: #fbbf24;
 }
 
+.stat-card-red {
+  border-color: rgba(239, 68, 68, 0.25);
+}
+.stat-card-red .stat-card-value {
+  color: #f87171;
+}
+
 .stat-card-slate .stat-card-value {
   color: #e2e8f0;
 }

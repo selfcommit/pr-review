@@ -2,13 +2,23 @@ import { useEffect, useState } from 'react'
 import { apiGet } from '../utils/api'
 import { RepoStats, StatsResponse, StatsSummary, formatLatency } from '../types/stats'
 
-function StatCard({ label, value, tone }: { label: string; value: string | number; tone?: 'green' | 'amber' | 'blue' | 'slate' }) {
+type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
+
+function StatCard({ label, value, tone }: { label: string; value: string | number; tone?: StatTone }) {
   return (
     <div className={`stat-card stat-card-${tone || 'slate'}`}>
       <div className="stat-card-label">{label}</div>
       <div className="stat-card-value">{value}</div>
     </div>
   )
+}
+
+function p90Tone(latencySeconds: number | null | undefined): StatTone {
+  if (latencySeconds == null) return 'slate'
+  const hours = latencySeconds / 3600
+  if (hours >= 24) return 'red'
+  if (hours >= 12) return 'amber'
+  return 'green'
 }
 
 function StatRow({ summary, sampleLabel }: { summary: StatsSummary; sampleLabel?: string }) {
@@ -20,7 +30,7 @@ function StatRow({ summary, sampleLabel }: { summary: StatsSummary; sampleLabel?
       <StatCard
         label={sampleLabel ? `P90 Review Time (${sampleLabel})` : 'P90 Review Time'}
         value={formatLatency(summary.p90_latency_seconds)}
-        tone="slate"
+        tone={p90Tone(summary.p90_latency_seconds)}
       />
     </div>
   )
