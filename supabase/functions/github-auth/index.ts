@@ -273,67 +273,124 @@ async function syncUserAndOrgs(
   return sessionToken;
 }
 
-async function fetchReviewRequestedAt(
+interface ReviewRequestedTimelineNode {
+  __typename?: string;
+  createdAt?: string;
+  requestedReviewer?: { __typename?: string; login?: string };
+}
+
+async function fetchReviewRequestedAtBatch(
   accessToken: string,
-  owner: string,
-  repo: string,
-  prNumber: number,
+  items: Array<{ id: number; number: number; repoFullName: string }>,
   targetLogin: string
-): Promise<string | null> {
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    Accept: "application/vnd.github.v3+json",
-  };
+): Promise<Record<number, string>> {
+  const result: Record<number, string> = {};
+  if (items.length === 0) return result;
 
-  let latestReviewRequested: string | null = null;
-  let latestReadyForReview: string | null = null;
-  let page = 1;
-  const perPage = 100;
+  const loginLower = targetLogin.toLowerCase();
+  const chunkSize = 20;
 
-  while (page <= 5) {
-    const resp = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/timeline?per_page=${perPage}&page=${page}`,
-      { headers }
-    );
-
-    if (!resp.ok) {
-      console.error(
-        `[fetchTimeline] Failed for ${owner}/${repo}#${prNumber}: ${resp.status}`
-      );
-      break;
-    }
-
-    const events = await resp.json();
-    if (!Array.isArray(events) || events.length === 0) break;
-
-    for (const event of events) {
-      if (event.event === "review_requested") {
-        const reviewer = event.requested_reviewer;
-        if (
-          reviewer &&
-          reviewer.login?.toLowerCase() === targetLogin.toLowerCase()
-        ) {
-          latestReviewRequested = event.created_at;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const aliases = chunk.map((item, idx) => {
+      const [owner, repo] = item.repoFullName.split("/");
+      return `pr${idx}: repository(owner: "${owner}", name: "${repo}") {
+        pullRequest(number: ${item.number}) {
+          timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT], last: 50) {
+            nodes {
+              __typename
+              ... on ReviewRequestedEvent {
+                createdAt
+                requestedReviewer {
+                  __typename
+                  ... on User { login }
+                }
+              }
+              ... on ReadyForReviewEvent {
+                createdAt
+              }
+            }
+          }
         }
-      } else if (event.event === "ready_for_review") {
-        latestReadyForReview = event.created_at;
+      }`;
+    });
+
+    const query = `query { ${aliases.join(" ")} }`;
+
+    try {
+      const resp = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github.v3+json",
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!resp.ok) {
+        console.error(
+          `[fetchReviewRequestedAtBatch] graphql failed: ${resp.status}`
+        );
+        continue;
       }
+
+      const data = await resp.json();
+      if (!data || !data.data) {
+        console.error(
+          "[fetchReviewRequestedAtBatch] empty graphql response",
+          data?.errors
+        );
+        continue;
+      }
+
+      chunk.forEach((item, idx) => {
+        try {
+          const pr = data.data[`pr${idx}`]?.pullRequest;
+          if (!pr) return;
+          const nodes: ReviewRequestedTimelineNode[] =
+            pr.timelineItems?.nodes || [];
+
+          let latestReviewRequested: string | null = null;
+          let latestReadyForReview: string | null = null;
+
+          for (const node of nodes) {
+            if (!node?.createdAt) continue;
+            if (node.__typename === "ReviewRequestedEvent") {
+              if (
+                node.requestedReviewer?.__typename === "User" &&
+                node.requestedReviewer.login?.toLowerCase() === loginLower
+              ) {
+                latestReviewRequested = node.createdAt;
+              }
+            } else if (node.__typename === "ReadyForReviewEvent") {
+              latestReadyForReview = node.createdAt;
+            }
+          }
+
+          if (!latestReviewRequested) return;
+
+          if (
+            latestReadyForReview &&
+            new Date(latestReadyForReview) > new Date(latestReviewRequested)
+          ) {
+            result[item.id] = latestReadyForReview;
+          } else {
+            result[item.id] = latestReviewRequested;
+          }
+        } catch (err) {
+          console.error(
+            `[fetchReviewRequestedAtBatch] parse failed for ${item.repoFullName}#${item.number}`,
+            err
+          );
+        }
+      });
+    } catch (err) {
+      console.error("[fetchReviewRequestedAtBatch] request failed", err);
     }
-
-    if (events.length < perPage) break;
-    page++;
   }
 
-  if (!latestReviewRequested) return null;
-
-  if (
-    latestReadyForReview &&
-    new Date(latestReadyForReview) > new Date(latestReviewRequested)
-  ) {
-    return latestReadyForReview;
-  }
-
-  return latestReviewRequested;
+  return result;
 }
 
 interface SnapshotRow {
@@ -717,7 +774,7 @@ async function resolveReviewTimestamps(
   githubUserId: number,
   accessToken: string,
   login: string,
-  prItems: Array<{ id: number; number: number; repoFullName: string }>,
+  prItems: Array<{ id: number; number: number; repoFullName: string; prCreatedAt?: string }>,
   forceRefreshIds: Set<number> = new Set()
 ): Promise<Record<number, string>> {
   const timestamps: Record<number, string> = {};
@@ -726,49 +783,65 @@ async function resolveReviewTimestamps(
   const prIds = prItems.map((p) => p.id);
   const { data: cached } = await supabase
     .from("review_requests")
-    .select("pr_id, review_requested_at")
+    .select("pr_id, review_requested_at, is_fallback_timestamp")
     .eq("github_user_id", githubUserId)
     .in("pr_id", prIds);
 
+  const cachedFallbackIds = new Set<number>();
   if (cached) {
     for (const row of cached) {
+      if (row.is_fallback_timestamp) cachedFallbackIds.add(row.pr_id);
       if (!forceRefreshIds.has(row.pr_id)) {
         timestamps[row.pr_id] = row.review_requested_at;
       }
     }
   }
 
-  const uncachedItems = prItems.filter((p) => !timestamps[p.id]);
+  const uncachedItems = prItems.filter(
+    (p) =>
+      forceRefreshIds.has(p.id) ||
+      cachedFallbackIds.has(p.id) ||
+      !timestamps[p.id]
+  );
 
-  const batchSize = 5;
-  for (let i = 0; i < uncachedItems.length; i += batchSize) {
-    const batch = uncachedItems.slice(i, i + batchSize);
-    const results = await Promise.all(
-      batch.map(async (item) => {
-        const [owner, repo] = item.repoFullName.split("/");
-        const ts = await fetchReviewRequestedAt(
-          accessToken,
-          owner,
-          repo,
-          item.number,
-          login
-        );
-        return { item, ts };
-      })
+  if (uncachedItems.length > 0) {
+    const fetched = await fetchReviewRequestedAtBatch(
+      accessToken,
+      uncachedItems,
+      login
     );
 
-    for (const { item, ts } of results) {
-      if (ts) {
-        timestamps[item.id] = ts;
+    for (const item of uncachedItems) {
+      const accurateTs = fetched[item.id];
+
+      if (accurateTs) {
+        timestamps[item.id] = accurateTs;
         await supabase.from("review_requests").upsert(
           {
             github_user_id: githubUserId,
             pr_id: item.id,
             pr_number: item.number,
             repo_full_name: item.repoFullName,
-            review_requested_at: ts,
+            review_requested_at: accurateTs,
+            is_fallback_timestamp: false,
           },
           { onConflict: "github_user_id,pr_id" }
+        );
+      } else if (!timestamps[item.id] && item.prCreatedAt) {
+        timestamps[item.id] = item.prCreatedAt;
+        await supabase.from("review_requests").upsert(
+          {
+            github_user_id: githubUserId,
+            pr_id: item.id,
+            pr_number: item.number,
+            repo_full_name: item.repoFullName,
+            review_requested_at: item.prCreatedAt,
+            is_fallback_timestamp: true,
+          },
+          { onConflict: "github_user_id,pr_id" }
+        );
+        console.warn(
+          `[resolveReviewTimestamps] fallback to PR created_at for ${item.repoFullName}#${item.number}`
         );
       }
     }
@@ -1150,6 +1223,7 @@ Deno.serve(async (req: Request) => {
         id: item.id,
         number: item.number,
         repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+        prCreatedAt: item.created_at,
       }));
 
       const [timestampsResult, , , approvalStatusResult] = await Promise.all([
@@ -1450,6 +1524,7 @@ Deno.serve(async (req: Request) => {
           id: item.id,
           number: item.number,
           repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+          prCreatedAt: item.created_at,
         }));
 
         newReviewTimestamps = await resolveReviewTimestamps(
