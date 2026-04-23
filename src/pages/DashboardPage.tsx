@@ -12,7 +12,7 @@ import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import ReviewRequestedTab from '../components/ReviewRequestedTab'
-import AssignedTab from '../components/AssignedTab'
+import MyPrsTab from '../components/MyPrsTab'
 import StatsTab from '../components/StatsTab'
 import NotificationToast from '../components/NotificationToast'
 import NotificationPermissionBanner from '../components/NotificationPermissionBanner'
@@ -47,7 +47,7 @@ interface ToastMessage {
 }
 
 type TabId = 'pull-requests' | 'stats' | 'organizations'
-type PRSubTab = 'review-requested' | 'assigned'
+type PRSubTab = 'review-requested' | 'mine'
 
 function DashboardPage() {
   const navigate = useNavigate()
@@ -510,10 +510,10 @@ function DashboardPage() {
                   )}
                 </button>
                 <button
-                  className={`sub-tab-button ${prSubTab === 'assigned' ? 'sub-tab-button-active' : ''}`}
-                  onClick={() => setPrSubTab('assigned')}
+                  className={`sub-tab-button ${prSubTab === 'mine' ? 'sub-tab-button-active' : ''}`}
+                  onClick={() => setPrSubTab('mine')}
                 >
-                  Assigned to Me
+                  My PRs
                 </button>
               </div>
 
@@ -554,7 +554,7 @@ function DashboardPage() {
                 </>
               )}
 
-              {prSubTab === 'assigned' && <AssignedTab />}
+              {prSubTab === 'mine' && <MyPrsTab />}
             </>
           )}
 

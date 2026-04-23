@@ -1343,7 +1343,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    if (path === "pull-requests-assigned") {
+    if (path === "pull-requests-mine") {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
         return jsonResponse({ error: "Missing session token" }, 401);
@@ -1367,34 +1367,63 @@ Deno.serve(async (req: Request) => {
         Accept: "application/vnd.github.v3+json",
       };
 
-      const assignedQuery = "is:open is:pr assignee:@me";
-      const resp = await fetch(
-        `https://api.github.com/search/issues?q=${encodeURIComponent(assignedQuery)}&per_page=100`,
-        { headers: ghHeaders }
-      );
+      const runSearch = (query: string) =>
+        fetch(
+          `https://api.github.com/search/issues?q=${encodeURIComponent(query)}&per_page=100`,
+          { headers: ghHeaders }
+        );
 
-      if (resp.status === 401) {
+      const [authoredResp, assignedResp] = await Promise.all([
+        runSearch("is:open is:pr author:@me"),
+        runSearch("is:open is:pr assignee:@me"),
+      ]);
+
+      if (authoredResp.status === 401 || assignedResp.status === 401) {
         return jsonResponse(
           { error: "GitHub token expired", code: "token_expired" },
           401
         );
       }
 
-      const resultRaw = await resp.json();
-      const result = resultRaw && typeof resultRaw === "object"
-        ? resultRaw
-        : { items: [], total_count: 0 };
-      if (result.items && !Array.isArray(result.items)) {
-        result.items = [];
-      }
+      const parseItems = async (resp: Response) => {
+        const raw = await resp.json();
+        if (raw && typeof raw === "object" && Array.isArray(raw.items)) {
+          return raw.items as Array<Record<string, unknown>>;
+        }
+        return [] as Array<Record<string, unknown>>;
+      };
 
-      const rateLimitRemaining =
-        resp.headers.get("X-RateLimit-Remaining") || null;
+      const [authoredItems, assignedItems] = await Promise.all([
+        parseItems(authoredResp),
+        parseItems(assignedResp),
+      ]);
+
+      const byId = new Map<unknown, Record<string, unknown>>();
+      for (const item of [...authoredItems, ...assignedItems]) {
+        const id = (item as { id?: unknown }).id;
+        if (id !== undefined && !byId.has(id)) {
+          byId.set(id, item);
+        }
+      }
+      const items = Array.from(byId.values());
+
+      const minRemaining = (a: string | null, b: string | null) => {
+        if (a === null) return b;
+        if (b === null) return a;
+        return Number(a) <= Number(b) ? a : b;
+      };
+
+      const rateLimitRemaining = minRemaining(
+        authoredResp.headers.get("X-RateLimit-Remaining"),
+        assignedResp.headers.get("X-RateLimit-Remaining")
+      );
       const rateLimitReset =
-        resp.headers.get("X-RateLimit-Reset") || null;
+        authoredResp.headers.get("X-RateLimit-Reset") ||
+        assignedResp.headers.get("X-RateLimit-Reset") ||
+        null;
 
       return jsonResponse({
-        assigned: result,
+        mine: { items, total_count: items.length },
         username: user.login,
         rateLimitRemaining,
         rateLimitReset,

@@ -4,47 +4,47 @@ import { mapItem, groupByOrg } from '../types/pullRequest'
 import type { OrgPRs } from '../types/pullRequest'
 import PRCard from './PRCard'
 
-function AssignedTab() {
+function MyPrsTab() {
   const [orgPRs, setOrgPRs] = useState<OrgPRs[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchAssigned = async () => {
+  const fetchMine = async () => {
     try {
       setLoading(true)
       setError(null)
 
       const data = await apiGet<{
-        assigned?: { items?: Array<Record<string, unknown>>; message?: string } | null
+        mine?: { items?: Array<Record<string, unknown>>; message?: string } | null
         username: string
-      }>('pull-requests-assigned')
+      }>('pull-requests-mine')
 
-      const assigned = data.assigned || { items: [] }
+      const mine = data.mine || { items: [] }
 
-      if (assigned.message && !assigned.items) {
-        throw new Error(assigned.message)
+      if (mine.message && !mine.items) {
+        throw new Error(mine.message)
       }
 
-      const items = Array.isArray(assigned.items) ? assigned.items : []
+      const items = Array.isArray(mine.items) ? mine.items : []
       const prs = items.map(mapItem)
       setOrgPRs(groupByOrg(prs))
     } catch (err) {
       if (err instanceof Error && err.message === 'Session expired') return
-      setError(err instanceof Error ? err.message : 'Failed to fetch assigned PRs')
+      setError(err instanceof Error ? err.message : 'Failed to fetch your pull requests')
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchAssigned()
+    fetchMine()
   }, [])
 
   if (loading) {
     return (
       <div className="loading-state">
         <div className="spinner"></div>
-        <p>Loading assigned pull requests...</p>
+        <p>Loading your pull requests...</p>
       </div>
     )
   }
@@ -53,7 +53,7 @@ function AssignedTab() {
     return (
       <div className="error-state">
         <p className="error-message">{error}</p>
-        <button onClick={fetchAssigned} className="retry-button">
+        <button onClick={fetchMine} className="retry-button">
           Try Again
         </button>
       </div>
@@ -67,8 +67,8 @@ function AssignedTab() {
           <circle cx="12" cy="12" r="10"/>
           <path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
         </svg>
-        <h2>No assigned PRs</h2>
-        <p>You don't have any open pull requests assigned to you.</p>
+        <h2>No PRs</h2>
+        <p>You don't have any open pull requests you've created or are assigned to.</p>
       </div>
     )
   }
@@ -92,4 +92,4 @@ function AssignedTab() {
   )
 }
 
-export default AssignedTab
+export default MyPrsTab
