@@ -1374,8 +1374,8 @@ Deno.serve(async (req: Request) => {
         );
 
       const [authoredResp, assignedResp] = await Promise.all([
-        runSearch("is:open is:pr author:@me"),
-        runSearch("is:open is:pr assignee:@me"),
+        runSearch("is:open is:pr author:@me archived:false"),
+        runSearch("is:open is:pr assignee:@me archived:false"),
       ]);
 
       if (authoredResp.status === 401 || assignedResp.status === 401) {
