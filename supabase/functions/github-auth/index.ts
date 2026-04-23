@@ -393,6 +393,349 @@ async function fetchReviewRequestedAtBatch(
   return result;
 }
 
+const STATS_WINDOW_DAYS = 120;
+const STATS_BACKFILL_TTL_MS = 30 * 60 * 1000;
+
+interface BackfillPr {
+  id: number;
+  number: number;
+  repoFullName: string;
+  title: string;
+  html_url: string;
+}
+
+async function searchPrsForBackfill(
+  accessToken: string,
+  query: string,
+  maxPages = 3
+): Promise<BackfillPr[]> {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/vnd.github.v3+json",
+  };
+  const result: BackfillPr[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const resp = await fetch(
+      `https://api.github.com/search/issues?q=${encodeURIComponent(query)}&per_page=100&page=${page}`,
+      { headers }
+    );
+    if (!resp.ok) {
+      console.error("[searchPrsForBackfill] failed", resp.status, query);
+      break;
+    }
+    const data = await resp.json();
+    const items: Array<{
+      id: number;
+      number: number;
+      title?: string;
+      html_url?: string;
+      repository_url?: string;
+    }> = Array.isArray(data?.items) ? data.items : [];
+    for (const item of items) {
+      const repoFullName = (item.repository_url || "")
+        .split("/")
+        .slice(-2)
+        .join("/");
+      if (!repoFullName) continue;
+      result.push({
+        id: item.id,
+        number: item.number,
+        repoFullName,
+        title: item.title || "",
+        html_url: item.html_url || "",
+      });
+    }
+    if (items.length < 100) break;
+  }
+  return result;
+}
+
+interface BackfillTimelineNode {
+  __typename?: string;
+  createdAt?: string;
+  requestedReviewer?: { __typename?: string; login?: string };
+}
+
+interface BackfillReviewNode {
+  databaseId?: number;
+  state?: string;
+  submittedAt?: string;
+  author?: { login?: string };
+}
+
+async function fetchBackfillDetailsBatch(
+  accessToken: string,
+  items: BackfillPr[],
+  targetLogin: string
+): Promise<
+  Record<
+    number,
+    {
+      reviewRequestedAt: string | null;
+      reviews: Array<{ id: number; state: string; submittedAt: string }>;
+    }
+  >
+> {
+  const loginLower = targetLogin.toLowerCase();
+  const result: Record<
+    number,
+    {
+      reviewRequestedAt: string | null;
+      reviews: Array<{ id: number; state: string; submittedAt: string }>;
+    }
+  > = {};
+  if (items.length === 0) return result;
+
+  const chunkSize = 15;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const aliases = chunk.map((item, idx) => {
+      const [owner, repo] = item.repoFullName.split("/");
+      return `pr${idx}: repository(owner: "${owner}", name: "${repo}") {
+        pullRequest(number: ${item.number}) {
+          timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT], last: 50) {
+            nodes {
+              __typename
+              ... on ReviewRequestedEvent {
+                createdAt
+                requestedReviewer { __typename ... on User { login } }
+              }
+              ... on ReadyForReviewEvent { createdAt }
+            }
+          }
+          reviews(first: 50) {
+            nodes {
+              databaseId
+              state
+              submittedAt
+              author { login }
+            }
+          }
+        }
+      }`;
+    });
+
+    const query = `query { ${aliases.join(" ")} }`;
+    try {
+      const resp = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github.v3+json",
+        },
+        body: JSON.stringify({ query }),
+      });
+      if (!resp.ok) {
+        console.error("[fetchBackfillDetailsBatch] failed", resp.status);
+        continue;
+      }
+      const data = await resp.json();
+      if (!data?.data) continue;
+
+      chunk.forEach((item, idx) => {
+        const pr = data.data[`pr${idx}`]?.pullRequest;
+        if (!pr) return;
+
+        let latestReviewRequested: string | null = null;
+        let latestReadyForReview: string | null = null;
+        const timelineNodes: BackfillTimelineNode[] =
+          pr.timelineItems?.nodes || [];
+        for (const node of timelineNodes) {
+          if (!node?.createdAt) continue;
+          if (node.__typename === "ReviewRequestedEvent") {
+            const rev = node.requestedReviewer;
+            if (
+              rev?.__typename === "User" &&
+              rev?.login?.toLowerCase() === loginLower
+            ) {
+              if (
+                !latestReviewRequested ||
+                new Date(node.createdAt) > new Date(latestReviewRequested)
+              ) {
+                latestReviewRequested = node.createdAt;
+              }
+            }
+          } else if (node.__typename === "ReadyForReviewEvent") {
+            if (
+              !latestReadyForReview ||
+              new Date(node.createdAt) > new Date(latestReadyForReview)
+            ) {
+              latestReadyForReview = node.createdAt;
+            }
+          }
+        }
+
+        let reviewRequestedAt: string | null = latestReviewRequested;
+        if (
+          latestReadyForReview &&
+          (!reviewRequestedAt ||
+            new Date(latestReadyForReview) > new Date(reviewRequestedAt))
+        ) {
+          reviewRequestedAt = latestReadyForReview;
+        }
+
+        const reviewNodes: BackfillReviewNode[] = pr.reviews?.nodes || [];
+        const reviews = reviewNodes
+          .filter(
+            (r) =>
+              r.author?.login?.toLowerCase() === loginLower &&
+              r.submittedAt &&
+              typeof r.databaseId === "number"
+          )
+          .map((r) => ({
+            id: r.databaseId as number,
+            state: (r.state || "COMMENTED").toLowerCase(),
+            submittedAt: r.submittedAt as string,
+          }));
+
+        result[item.id] = { reviewRequestedAt, reviews };
+      });
+    } catch (err) {
+      console.error("[fetchBackfillDetailsBatch] error", err);
+    }
+  }
+
+  return result;
+}
+
+async function backfillUserPrReviews(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  accessToken: string,
+  login: string,
+  lastBackfilledAt: string | null
+): Promise<boolean> {
+  if (lastBackfilledAt) {
+    const ageMs = Date.now() - new Date(lastBackfilledAt).getTime();
+    if (ageMs < STATS_BACKFILL_TTL_MS) return false;
+  }
+
+  const windowStart = new Date(
+    Date.now() - STATS_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+  const dateStr = windowStart.toISOString().slice(0, 10);
+
+  try {
+    const [reviewedPrs, requestedPrs] = await Promise.all([
+      searchPrsForBackfill(
+        accessToken,
+        `is:pr reviewed-by:@me updated:>=${dateStr}`
+      ),
+      searchPrsForBackfill(
+        accessToken,
+        `is:pr review-requested:@me updated:>=${dateStr}`
+      ),
+    ]);
+
+    const byId = new Map<number, BackfillPr>();
+    for (const p of [...reviewedPrs, ...requestedPrs]) {
+      if (!byId.has(p.id)) byId.set(p.id, p);
+    }
+    const candidates = Array.from(byId.values()).slice(0, 500);
+    if (candidates.length === 0) {
+      await supabase
+        .from("app_users")
+        .update({ stats_backfilled_at: new Date().toISOString() })
+        .eq("github_user_id", githubUserId);
+      return true;
+    }
+
+    const { data: existingReviews } = await supabase
+      .from("pr_reviews")
+      .select("pr_id, review_id")
+      .eq("github_user_id", githubUserId)
+      .in("pr_id", candidates.map((c) => c.id));
+
+    const existingReviewIds = new Set<string>(
+      (existingReviews || []).map(
+        (r: { pr_id: number; review_id: number }) =>
+          `${r.pr_id}:${r.review_id}`
+      )
+    );
+    const prsWithReviews = new Set<number>(
+      (existingReviews || []).map((r: { pr_id: number }) => r.pr_id)
+    );
+
+    const prsToFetch = candidates.filter((c) => !prsWithReviews.has(c.id));
+    if (prsToFetch.length === 0) {
+      await supabase
+        .from("app_users")
+        .update({ stats_backfilled_at: new Date().toISOString() })
+        .eq("github_user_id", githubUserId);
+      return true;
+    }
+
+    const details = await fetchBackfillDetailsBatch(
+      accessToken,
+      prsToFetch,
+      login
+    );
+
+    for (const pr of prsToFetch) {
+      const detail = details[pr.id];
+      if (!detail) continue;
+
+      if (detail.reviewRequestedAt) {
+        await supabase.from("review_requests").upsert(
+          {
+            github_user_id: githubUserId,
+            pr_id: pr.id,
+            pr_number: pr.number,
+            repo_full_name: pr.repoFullName,
+            review_requested_at: detail.reviewRequestedAt,
+            is_fallback_timestamp: false,
+          },
+          { onConflict: "github_user_id,pr_id" }
+        );
+      }
+
+      const requestedMs = detail.reviewRequestedAt
+        ? new Date(detail.reviewRequestedAt).getTime()
+        : null;
+
+      for (const review of detail.reviews) {
+        const key = `${pr.id}:${review.id}`;
+        if (existingReviewIds.has(key)) continue;
+
+        let latencySeconds: number | null = null;
+        if (requestedMs) {
+          const diff = Math.floor(
+            (new Date(review.submittedAt).getTime() - requestedMs) / 1000
+          );
+          if (diff >= 0) latencySeconds = diff;
+        }
+
+        await supabase.from("pr_reviews").upsert(
+          {
+            github_user_id: githubUserId,
+            pr_id: pr.id,
+            pr_number: pr.number,
+            repo_full_name: pr.repoFullName,
+            pr_title: pr.title,
+            pr_html_url: pr.html_url,
+            review_id: review.id,
+            review_state: review.state,
+            submitted_at: review.submittedAt,
+            latency_seconds: latencySeconds,
+          },
+          { onConflict: "github_user_id,review_id" }
+        );
+      }
+    }
+
+    await supabase
+      .from("app_users")
+      .update({ stats_backfilled_at: new Date().toISOString() })
+      .eq("github_user_id", githubUserId);
+
+    return true;
+  } catch (err) {
+    console.error("[backfillUserPrReviews] failed", err);
+    return false;
+  }
+}
+
 async function fetchPrReviewStatusBatch(
   accessToken: string,
   items: Array<{ id: number; number: number; repoFullName: string }>
@@ -1704,7 +2047,7 @@ Deno.serve(async (req: Request) => {
 
       const { data: user } = await supabase
         .from("app_users")
-        .select("github_user_id")
+        .select("github_user_id, access_token, login, stats_backfilled_at")
         .eq("session_token", sessionToken)
         .maybeSingle();
 
@@ -1712,12 +2055,31 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ error: "Invalid session" }, 401);
       }
 
+      await backfillUserPrReviews(
+        supabase,
+        user.github_user_id,
+        user.access_token,
+        user.login,
+        user.stats_backfilled_at
+      );
+
+      const { data: freshUser } = await supabase
+        .from("app_users")
+        .select("stats_backfilled_at")
+        .eq("github_user_id", user.github_user_id)
+        .maybeSingle();
+
+      const windowStartIso = new Date(
+        Date.now() - STATS_WINDOW_DAYS * 24 * 60 * 60 * 1000
+      ).toISOString();
+
       const { data: reviews } = await supabase
         .from("pr_reviews")
         .select(
           "pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
         )
-        .eq("github_user_id", user.github_user_id);
+        .eq("github_user_id", user.github_user_id)
+        .gte("submitted_at", windowStartIso);
 
       const rows = reviews || [];
 
@@ -1828,7 +2190,12 @@ Deno.serve(async (req: Request) => {
         latency_sample_size: allLatencies.length,
       };
 
-      return jsonResponse({ summary, repos: perRepo });
+      return jsonResponse({
+        summary,
+        repos: perRepo,
+        window_days: STATS_WINDOW_DAYS,
+        backfilled_at: freshUser?.stats_backfilled_at ?? null,
+      });
     }
 
     if (path === "audio-state") {

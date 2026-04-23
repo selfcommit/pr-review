@@ -138,13 +138,15 @@ function StatsTab() {
     )
   }
 
+  const windowDays = data?.window_days ?? 120
+
   if (!data || data.summary.total_reviews === 0) {
     return (
       <div className="stats-empty">
         <h2>No review data yet</h2>
         <p>
-          Review stats populate automatically as you use the dashboard. Load the Pull Requests tab
-          at least once after completing reviews on GitHub, then come back here.
+          Review stats cover the last {windowDays} days of PRs where you reviewed or were
+          requested. They populate automatically the first time you open this tab.
         </p>
       </div>
     )
@@ -154,7 +156,7 @@ function StatsTab() {
     <div className="stats-tab">
       <div className="stats-section">
         <div className="stats-section-header">
-          <h2 className="stats-section-title">All Repositories</h2>
+          <h2 className="stats-section-title">All Repositories (last {windowDays} days)</h2>
           <button className="stats-refresh-btn" onClick={load}>
             Refresh
           </button>

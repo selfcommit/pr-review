@@ -31,6 +31,8 @@ export interface StatsSummary {
 export interface StatsResponse {
   summary: StatsSummary
   repos: RepoStats[]
+  window_days?: number
+  backfilled_at?: string | null
 }
 
 export function formatLatency(seconds: number | null): string {
