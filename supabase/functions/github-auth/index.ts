@@ -393,6 +393,71 @@ async function fetchReviewRequestedAtBatch(
   return result;
 }
 
+async function fetchPrReviewStatusBatch(
+  accessToken: string,
+  items: Array<{ id: number; number: number; repoFullName: string }>
+): Promise<Record<number, { review_decision: string | null; mergeable: string | null }>> {
+  const result: Record<number, { review_decision: string | null; mergeable: string | null }> = {};
+  if (items.length === 0) return result;
+
+  const chunkSize = 20;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const aliases = chunk.map((item, idx) => {
+      const [owner, repo] = item.repoFullName.split("/");
+      return `pr${idx}: repository(owner: "${owner}", name: "${repo}") {
+        pullRequest(number: ${item.number}) {
+          reviewDecision
+          mergeable
+        }
+      }`;
+    });
+
+    const query = `query { ${aliases.join(" ")} }`;
+
+    try {
+      const resp = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github.v3+json",
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!resp.ok) {
+        console.error(
+          `[fetchPrReviewStatusBatch] graphql failed: ${resp.status}`
+        );
+        continue;
+      }
+
+      const data = await resp.json();
+      if (!data || !data.data) {
+        console.error(
+          "[fetchPrReviewStatusBatch] empty graphql response",
+          data?.errors
+        );
+        continue;
+      }
+
+      chunk.forEach((item, idx) => {
+        const pr = data.data[`pr${idx}`]?.pullRequest;
+        if (!pr) return;
+        result[item.id] = {
+          review_decision: pr.reviewDecision ?? null,
+          mergeable: pr.mergeable ?? null,
+        };
+      });
+    } catch (err) {
+      console.error("[fetchPrReviewStatusBatch] request failed", err);
+    }
+  }
+
+  return result;
+}
+
 interface SnapshotRow {
   id: string;
   pr_id: number;
@@ -1422,8 +1487,35 @@ Deno.serve(async (req: Request) => {
         assignedResp.headers.get("X-RateLimit-Reset") ||
         null;
 
+      const statusItems = items
+        .map((item) => {
+          const id = (item as { id?: number }).id;
+          const number = (item as { number?: number }).number;
+          const repoUrl = (item as { repository_url?: string }).repository_url || "";
+          const repoFullName = repoUrl.split("/").slice(-2).join("/");
+          if (typeof id !== "number" || typeof number !== "number" || !repoFullName) {
+            return null;
+          }
+          return { id, number, repoFullName };
+        })
+        .filter((x): x is { id: number; number: number; repoFullName: string } => x !== null);
+
+      const statusMap = await fetchPrReviewStatusBatch(user.access_token, statusItems);
+
+      const enrichedItems = items.map((item) => {
+        const id = (item as { id?: number }).id;
+        if (typeof id === "number" && statusMap[id]) {
+          return {
+            ...item,
+            review_decision: statusMap[id].review_decision,
+            mergeable: statusMap[id].mergeable,
+          };
+        }
+        return item;
+      });
+
       return jsonResponse({
-        mine: { items, total_count: items.length },
+        mine: { items: enrichedItems, total_count: enrichedItems.length },
         username: user.login,
         rateLimitRemaining,
         rateLimitReset,

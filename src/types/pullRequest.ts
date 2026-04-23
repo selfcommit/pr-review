@@ -18,6 +18,8 @@ export interface PullRequest {
   draft: boolean
   review_requested_at?: string
   team_approval_required?: boolean
+  review_decision?: string | null
+  mergeable?: string | null
 }
 
 export interface OrgPRs {
@@ -50,6 +52,8 @@ export function mapItem(item: Record<string, unknown>): PullRequest {
     draft: (item.draft as boolean) || false,
     team_approval_required:
       (item.team_approval_required as boolean | undefined) ?? undefined,
+    review_decision: (item.review_decision as string | null | undefined) ?? null,
+    mergeable: (item.mergeable as string | null | undefined) ?? null,
   }
 }
 
