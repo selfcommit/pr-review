@@ -99,7 +99,7 @@ function StatRow({
         label="Declined"
         value={summary.declined}
         tone="slate"
-        sublabel={<>Comment <RunnerIcon /> to decline</>}
+        sublabel={<span style={{ display: 'inline' }}>Comment <RunnerIcon /> to decline</span>}
         icon={<RunnerIcon />}
       />
       <StatCard
