@@ -1303,17 +1303,16 @@
   cursor: default;
 }
 
-.repo-stats-pr-row--with-repo {
-  grid-template-columns: 60px 110px 1fr auto auto;
-}
-
-.repo-stats-pr-repo {
+.repo-stats-pr-repo-prefix {
   color: #94a3b8;
   font-size: 12px;
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-right: 6px;
+}
+
+.repo-stats-pr-repo-prefix::after {
+  content: ' /';
+  color: rgba(148, 163, 184, 0.5);
 }
 
 .stats-tab {
@@ -1872,10 +1871,7 @@
   .repo-stats-pr-row {
     grid-template-columns: 50px 1fr auto;
   }
-  .repo-stats-pr-row--with-repo {
-    grid-template-columns: 50px 1fr auto;
-  }
-  .repo-stats-pr-repo {
+  .repo-stats-pr-repo-prefix {
     display: none;
   }
   .repo-stats-pr-state {

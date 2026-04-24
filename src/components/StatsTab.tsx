@@ -128,10 +128,8 @@ export function PrDrawer({
 
   if (!hasLatency || totalPrs === 0) return null
 
-  const rowClass = showRepo ? 'repo-stats-pr-row repo-stats-pr-row--with-repo' : 'repo-stats-pr-row'
-  const excludedRowClass = showRepo
-    ? 'repo-stats-pr-row repo-stats-pr-row--with-repo repo-stats-pr-row--excluded'
-    : 'repo-stats-pr-row repo-stats-pr-row--excluded'
+  const rowClass = 'repo-stats-pr-row'
+  const excludedRowClass = 'repo-stats-pr-row repo-stats-pr-row--excluded'
 
   const repoShort = (r?: string) => {
     if (!r) return ''
@@ -159,8 +157,10 @@ export function PrDrawer({
               className={excludedRowClass}
             >
               <span className="repo-stats-pr-number">#{pr.pr_number}</span>
-              {showRepo && <span className="repo-stats-pr-repo">{repoShort(pr.repo)}</span>}
-              <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
+              <span className="repo-stats-pr-title">
+                {showRepo && <span className="repo-stats-pr-repo-prefix">{repoShort(pr.repo)}</span>}
+                {pr.title || '(no title)'}
+              </span>
               <span className={`repo-stats-pr-state state-${pr.review_state}`}>
                 {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
               </span>
@@ -185,8 +185,10 @@ export function PrDrawer({
               className={rowClass}
             >
               <span className="repo-stats-pr-number">#{pr.pr_number}</span>
-              {showRepo && <span className="repo-stats-pr-repo">{repoShort(pr.repo)}</span>}
-              <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
+              <span className="repo-stats-pr-title">
+                {showRepo && <span className="repo-stats-pr-repo-prefix">{repoShort(pr.repo)}</span>}
+                {pr.title || '(no title)'}
+              </span>
               <span className={`repo-stats-pr-state state-${pr.review_state}`}>
                 {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
               </span>
