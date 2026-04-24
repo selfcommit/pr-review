@@ -2083,6 +2083,26 @@ Deno.serve(async (req: Request) => {
 
       const rows = reviews || [];
 
+      interface IncludedPr {
+        pr_id: number;
+        pr_number: number;
+        title: string;
+        html_url: string;
+        latency_seconds: number;
+        review_state: string;
+        submitted_at: string;
+      }
+
+      interface ExcludedPr {
+        pr_id: number;
+        pr_number: number;
+        title: string;
+        html_url: string;
+        review_state: string;
+        submitted_at: string;
+        exclusion_reason: string;
+      }
+
       interface RepoAgg {
         repo: string;
         total: number;
@@ -2090,18 +2110,8 @@ Deno.serve(async (req: Request) => {
         changesRequested: number;
         commented: number;
         latencies: number[];
-        prMap: Map<
-          number,
-          {
-            pr_id: number;
-            pr_number: number;
-            title: string;
-            html_url: string;
-            latency_seconds: number;
-            review_state: string;
-            submitted_at: string;
-          }
-        >;
+        prMap: Map<number, IncludedPr>;
+        excludedMap: Map<number, ExcludedPr>;
       }
 
       const byRepo = new Map<string, RepoAgg>();
@@ -2118,6 +2128,7 @@ Deno.serve(async (req: Request) => {
             commented: 0,
             latencies: [],
             prMap: new Map(),
+            excludedMap: new Map(),
           };
           byRepo.set(repo, agg);
         }
@@ -2128,22 +2139,70 @@ Deno.serve(async (req: Request) => {
         else agg.commented += 1;
 
         const lat = r.latency_seconds as number | null;
-        if (typeof lat === "number" && lat >= 0) {
-          const existingPr = agg.prMap.get(r.pr_id as number);
+        const prId = r.pr_id as number;
+        const prNumber = r.pr_number as number;
+        const title = (r.pr_title as string) || "";
+        const htmlUrl = (r.pr_html_url as string) || "";
+        const submittedAt = r.submitted_at as string;
+        const qualifyingState =
+          state === "approved" || state === "changes_requested";
+        const hasLatency = typeof lat === "number" && lat >= 0;
+
+        let includedThisRow = false;
+        if (qualifyingState && hasLatency) {
+          const existingPr = agg.prMap.get(prId);
           if (
-            (state === "approved" || state === "changes_requested") &&
-            (!existingPr || new Date(r.submitted_at as string).getTime() <
-              new Date(existingPr.submitted_at).getTime())
+            !existingPr ||
+            new Date(submittedAt).getTime() <
+              new Date(existingPr.submitted_at).getTime()
           ) {
-            agg.prMap.set(r.pr_id as number, {
-              pr_id: r.pr_id as number,
-              pr_number: r.pr_number as number,
-              title: (r.pr_title as string) || "",
-              html_url: (r.pr_html_url as string) || "",
-              latency_seconds: lat,
+            if (existingPr) {
+              agg.excludedMap.set(prId, {
+                pr_id: prId,
+                pr_number: prNumber,
+                title,
+                html_url: htmlUrl,
+                review_state: existingPr.review_state,
+                submitted_at: existingPr.submitted_at,
+                exclusion_reason: "superseded",
+              });
+            }
+            agg.prMap.set(prId, {
+              pr_id: prId,
+              pr_number: prNumber,
+              title,
+              html_url: htmlUrl,
+              latency_seconds: lat as number,
               review_state: state,
-              submitted_at: r.submitted_at as string,
+              submitted_at: submittedAt,
             });
+            includedThisRow = true;
+          }
+        }
+
+        if (!includedThisRow) {
+          let reason: string | null = null;
+          if (!qualifyingState) reason = "no_completion_state";
+          else if (!hasLatency) reason = "missing_latency";
+          else reason = "superseded";
+
+          if (!agg.prMap.has(prId)) {
+            const prev = agg.excludedMap.get(prId);
+            if (
+              !prev ||
+              new Date(submittedAt).getTime() >
+                new Date(prev.submitted_at).getTime()
+            ) {
+              agg.excludedMap.set(prId, {
+                pr_id: prId,
+                pr_number: prNumber,
+                title,
+                html_url: htmlUrl,
+                review_state: state,
+                submitted_at: submittedAt,
+                exclusion_reason: reason,
+              });
+            }
           }
         }
       }
@@ -2160,6 +2219,11 @@ Deno.serve(async (req: Request) => {
           (a, b) => b.latency_seconds - a.latency_seconds
         );
         const latencies = prs.map((p) => p.latency_seconds);
+        const excluded_prs = Array.from(agg.excludedMap.values()).sort(
+          (a, b) =>
+            new Date(b.submitted_at).getTime() -
+            new Date(a.submitted_at).getTime()
+        );
         return {
           repo: agg.repo,
           total_reviews: agg.total,
@@ -2169,6 +2233,7 @@ Deno.serve(async (req: Request) => {
           p90_latency_seconds: percentile(latencies, 90),
           latency_sample_size: latencies.length,
           prs,
+          excluded_prs,
         };
       });
 

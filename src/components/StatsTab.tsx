@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiGet } from '../utils/api'
-import { RepoStats, StatsResponse, StatsSummary, formatLatency } from '../types/stats'
+import { RepoStats, StatsResponse, StatsSummary, formatLatency, exclusionReasonLabel } from '../types/stats'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
@@ -38,7 +38,10 @@ function StatRow({ summary, sampleLabel }: { summary: StatsSummary; sampleLabel?
 
 function RepoStatsCard({ repo }: { repo: RepoStats }) {
   const [open, setOpen] = useState(false)
+  const [excludedOpen, setExcludedOpen] = useState(false)
   const hasLatency = repo.latency_sample_size > 0
+  const excludedPrs = repo.excluded_prs || []
+  const hasExcluded = excludedPrs.length > 0
 
   return (
     <div className="repo-stats-card">
@@ -91,6 +94,52 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
               <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
             </a>
           ))}
+        </div>
+      )}
+
+      {hasExcluded && (
+        <button
+          className="repo-stats-drawer-toggle repo-stats-drawer-toggle-secondary"
+          onClick={() => setExcludedOpen(o => !o)}
+        >
+          {excludedOpen
+            ? 'Hide excluded PRs'
+            : `Show ${excludedPrs.length} excluded PR${excludedPrs.length === 1 ? '' : 's'}`}
+        </button>
+      )}
+
+      {excludedOpen && hasExcluded && (
+        <div className="repo-stats-pr-list">
+          {excludedPrs.map(pr => {
+            const stateLabel =
+              pr.review_state === 'approved'
+                ? 'Approved'
+                : pr.review_state === 'changes_requested'
+                  ? 'Changes Req.'
+                  : pr.review_state === 'commented'
+                    ? 'Commented'
+                    : pr.review_state === 'dismissed'
+                      ? 'Dismissed'
+                      : pr.review_state
+            return (
+              <a
+                key={pr.pr_id}
+                href={pr.html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="repo-stats-pr-row"
+              >
+                <span className="repo-stats-pr-number">#{pr.pr_number}</span>
+                <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
+                <span className={`repo-stats-pr-state state-${pr.review_state}`}>
+                  {stateLabel}
+                </span>
+                <span className="repo-stats-pr-exclusion">
+                  {exclusionReasonLabel(pr.exclusion_reason)}
+                </span>
+              </a>
+            )
+          })}
         </div>
       )}
     </div>

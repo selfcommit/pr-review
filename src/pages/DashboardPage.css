@@ -1544,6 +1544,28 @@
   text-align: right;
 }
 
+.repo-stats-drawer-toggle-secondary {
+  color: #94a3b8;
+}
+
+.repo-stats-drawer-toggle-secondary:hover {
+  color: #cbd5e1;
+}
+
+.repo-stats-pr-state.state-commented,
+.repo-stats-pr-state.state-dismissed {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+}
+
+.repo-stats-pr-exclusion {
+  color: #94a3b8;
+  font-size: 12px;
+  font-style: italic;
+  min-width: 50px;
+  text-align: right;
+}
+
 .stats-empty {
   text-align: center;
   padding: 64px 24px;
