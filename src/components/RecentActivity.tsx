@@ -104,7 +104,18 @@ function RecentActivity() {
             </button>
           ))}
         </div>
-        <span className="activity-window-label">Last {days} days</span>
+        <div className="activity-header-right">
+          <span className="activity-window-label">Last {days} days</span>
+          {canLoadMore && (
+            <button
+              className="activity-load-more"
+              onClick={handleLoadMore}
+              disabled={loadingMore}
+            >
+              {loadingMore ? 'Loading...' : 'Load older'}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="activity-scroll-container">
@@ -138,15 +149,6 @@ function RecentActivity() {
         )}
       </div>
 
-      {canLoadMore && (
-        <button
-          className="activity-load-more"
-          onClick={handleLoadMore}
-          disabled={loadingMore}
-        >
-          {loadingMore ? 'Loading...' : 'Load older activity'}
-        </button>
-      )}
     </div>
   )
 }
