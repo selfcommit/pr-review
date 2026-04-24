@@ -9,20 +9,36 @@ function StatCard({
   value,
   tone,
   sublabel,
+  icon,
 }: {
   label: string
   value: string | number
   tone?: StatTone
   sublabel?: ReactNode
+  icon?: ReactNode
 }) {
   return (
     <div className={`stat-card stat-card-${tone || 'slate'}`}>
-      <div className="stat-card-label">{label}</div>
+      <div className="stat-card-label">{icon && <span className="stat-card-icon">{icon}</span>}{label}</div>
       <div className="stat-card-value">{value}</div>
       {sublabel && <div className="stat-card-sublabel">{sublabel}</div>}
     </div>
   )
 }
+
+const ApprovedIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z" />
+  </svg>
+)
+
+const ChangesRequestedIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M2.75 1.5a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25V4.664a.25.25 0 0 0-.073-.177l-2.914-2.914a.25.25 0 0 0-.177-.073ZM2.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 12.25 16H2.75A1.75 1.75 0 0 1 1 14.25V1.75C1 .784 1.784 0 2.75 0Zm3.726 7.538H5.31a.75.75 0 0 1 0-1.5h1.166a.75.75 0 0 1 0 1.5Zm0 2.963H5.31a.75.75 0 0 1 0-1.5h1.166a.75.75 0 0 1 0 1.5ZM9.524 6.038h1.166a.75.75 0 0 1 0 1.5H9.524a.75.75 0 0 1 0-1.5Zm0 2.963h1.166a.75.75 0 0 1 0 1.5H9.524a.75.75 0 0 1 0-1.5Z" />
+  </svg>
+)
+
+const RunnerIcon = () => <span aria-label="runner">🏃</span>
 
 const ON_TARGET_SECONDS = 24 * 3600
 
@@ -70,18 +86,21 @@ function StatRow({
         value={summary.approved}
         tone="green"
         sublabel={total > 0 ? `${formatPercent(summary.approved, total)} of total` : undefined}
+        icon={<ApprovedIcon />}
       />
       <StatCard
         label="Changes Requested"
         value={summary.changes_requested}
         tone="amber"
         sublabel={total > 0 ? `${formatPercent(summary.changes_requested, total)} of total` : undefined}
+        icon={<ChangesRequestedIcon />}
       />
       <StatCard
         label="Declined"
         value={summary.declined}
         tone="slate"
-        sublabel="Comment :runner: to decline"
+        sublabel={<>Comment <RunnerIcon /> to decline</>}
+        icon={<RunnerIcon />}
       />
       <StatCard
         label={sampleLabel ? `P90 Review Time (${sampleLabel})` : 'P90 Review Time'}

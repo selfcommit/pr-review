@@ -1388,6 +1388,16 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.stat-card-icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .stat-card-value {
