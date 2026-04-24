@@ -14,6 +14,7 @@ export interface RepoStats {
   approved: number
   changes_requested: number
   commented: number
+  declined: number
   p90_latency_seconds: number | null
   latency_sample_size: number
   prs: StatsPR[]
@@ -25,6 +26,7 @@ export interface StatsSummary {
   approved: number
   changes_requested: number
   commented: number
+  declined: number
   p90_latency_seconds: number | null
   latency_sample_size: number
 }

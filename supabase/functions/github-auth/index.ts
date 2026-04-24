@@ -395,6 +395,37 @@ async function fetchReviewRequestedAtBatch(
 
 const STATS_WINDOW_DAYS = 120;
 const STATS_BACKFILL_TTL_MS = 30 * 60 * 1000;
+const COMMENT_RECHECK_TTL_MS = 5 * 60 * 1000;
+
+const RUNNER_EMOJI_REGEX = /(:runner:|\uD83C\uDFC3)/i;
+
+function commentDeclinesReview(body: string | null | undefined): boolean {
+  if (!body) return false;
+  return RUNNER_EMOJI_REGEX.test(body);
+}
+
+interface BackfillCommentNode {
+  databaseId?: number;
+  createdAt?: string;
+  bodyText?: string;
+  author?: { login?: string };
+}
+
+function findDeclineComment(
+  comments: BackfillCommentNode[],
+  loginLower: string
+): { declinedAt: string; commentId: number } | null {
+  let best: { declinedAt: string; commentId: number } | null = null;
+  for (const c of comments) {
+    if (!c?.createdAt || typeof c.databaseId !== "number") continue;
+    if ((c.author?.login || "").toLowerCase() !== loginLower) continue;
+    if (!commentDeclinesReview(c.bodyText)) continue;
+    if (!best || new Date(c.createdAt) < new Date(best.declinedAt)) {
+      best = { declinedAt: c.createdAt, commentId: c.databaseId };
+    }
+  }
+  return best;
+}
 
 interface BackfillPr {
   id: number;
@@ -473,6 +504,7 @@ async function fetchBackfillDetailsBatch(
     {
       reviewRequestedAt: string | null;
       reviews: Array<{ id: number; state: string; submittedAt: string }>;
+      decline: { declinedAt: string; commentId: number } | null;
     }
   >
 > {
@@ -482,6 +514,7 @@ async function fetchBackfillDetailsBatch(
     {
       reviewRequestedAt: string | null;
       reviews: Array<{ id: number; state: string; submittedAt: string }>;
+      decline: { declinedAt: string; commentId: number } | null;
     }
   > = {};
   if (items.length === 0) return result;
@@ -508,6 +541,14 @@ async function fetchBackfillDetailsBatch(
               databaseId
               state
               submittedAt
+              author { login }
+            }
+          }
+          comments(last: 50) {
+            nodes {
+              databaseId
+              createdAt
+              bodyText
               author { login }
             }
           }
@@ -589,7 +630,10 @@ async function fetchBackfillDetailsBatch(
             submittedAt: r.submittedAt as string,
           }));
 
-        result[item.id] = { reviewRequestedAt, reviews };
+        const commentNodes: BackfillCommentNode[] = pr.comments?.nodes || [];
+        const decline = findDeclineComment(commentNodes, loginLower);
+
+        result[item.id] = { reviewRequestedAt, reviews, decline };
       });
     } catch (err) {
       console.error("[fetchBackfillDetailsBatch] error", err);
@@ -675,6 +719,22 @@ async function backfillUserPrReviews(
     for (const pr of prsToFetch) {
       const detail = details[pr.id];
       if (!detail) continue;
+
+      if (detail.decline) {
+        await supabase.from("pr_declines").upsert(
+          {
+            github_user_id: githubUserId,
+            pr_id: pr.id,
+            pr_number: pr.number,
+            repo_full_name: pr.repoFullName,
+            pr_title: pr.title,
+            pr_html_url: pr.html_url,
+            declined_at: detail.decline.declinedAt,
+            comment_id: detail.decline.commentId,
+          },
+          { onConflict: "github_user_id,pr_id", ignoreDuplicates: true }
+        );
+      }
 
       if (detail.reviewRequestedAt) {
         await supabase.from("review_requests").upsert(
@@ -801,6 +861,67 @@ async function fetchPrReviewStatusBatch(
   return result;
 }
 
+async function fetchDeclineCommentsBatch(
+  accessToken: string,
+  items: Array<{ id: number; number: number; repoFullName: string }>,
+  targetLogin: string
+): Promise<Record<number, { declinedAt: string; commentId: number }>> {
+  const result: Record<number, { declinedAt: string; commentId: number }> = {};
+  if (items.length === 0) return result;
+
+  const loginLower = targetLogin.toLowerCase();
+  const chunkSize = 15;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const aliases = chunk.map((item, idx) => {
+      const [owner, repo] = item.repoFullName.split("/");
+      return `pr${idx}: repository(owner: "${owner}", name: "${repo}") {
+        pullRequest(number: ${item.number}) {
+          comments(last: 50) {
+            nodes {
+              databaseId
+              createdAt
+              bodyText
+              author { login }
+            }
+          }
+        }
+      }`;
+    });
+
+    const query = `query { ${aliases.join(" ")} }`;
+    try {
+      const resp = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github.v3+json",
+        },
+        body: JSON.stringify({ query }),
+      });
+      if (!resp.ok) {
+        console.error("[fetchDeclineCommentsBatch] failed", resp.status);
+        continue;
+      }
+      const data = await resp.json();
+      if (!data?.data) continue;
+
+      chunk.forEach((item, idx) => {
+        const pr = data.data[`pr${idx}`]?.pullRequest;
+        if (!pr) return;
+        const commentNodes: BackfillCommentNode[] = pr.comments?.nodes || [];
+        const decline = findDeclineComment(commentNodes, loginLower);
+        if (decline) result[item.id] = decline;
+      });
+    } catch (err) {
+      console.error("[fetchDeclineCommentsBatch] error", err);
+    }
+  }
+
+  return result;
+}
+
 interface SnapshotRow {
   id: string;
   pr_id: number;
@@ -814,6 +935,7 @@ interface SnapshotRow {
   author_avatar_url: string;
   pull_request_merged: boolean;
   pr_updated_at: string;
+  last_comment_check_at?: string | null;
 }
 
 interface GitHubSearchItem {
@@ -1928,14 +2050,25 @@ Deno.serve(async (req: Request) => {
         searchResult.items = [];
       }
 
-      const freshItems: GitHubSearchItem[] = Array.isArray(searchResult.items)
+      const rawFreshItems: GitHubSearchItem[] = Array.isArray(searchResult.items)
         ? searchResult.items
         : [];
+
+      const { data: declinedRows } = await supabase
+        .from("pr_declines")
+        .select("pr_id")
+        .eq("github_user_id", user.github_user_id);
+
+      const declinedIds = new Set<number>(
+        (declinedRows || []).map((r: { pr_id: number }) => r.pr_id)
+      );
+
+      let freshItems = rawFreshItems.filter((i) => !declinedIds.has(i.id));
 
       const { data: snapshots } = await supabase
         .from("user_pr_snapshots")
         .select(
-          "id, pr_id, pr_number, repo_full_name, state, draft, title, html_url, author_login, author_avatar_url, pull_request_merged, pr_updated_at"
+          "id, pr_id, pr_number, repo_full_name, state, draft, title, html_url, author_login, author_avatar_url, pull_request_merged, pr_updated_at, last_comment_check_at"
         )
         .eq("github_user_id", user.github_user_id);
 
@@ -1946,9 +2079,9 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      const freshIdSet = new Set(freshItems.map((i) => i.id));
-      const updatedItems: GitHubSearchItem[] = [];
-      const newItems: GitHubSearchItem[] = [];
+      let freshIdSet = new Set(freshItems.map((i) => i.id));
+      let updatedItems: GitHubSearchItem[] = [];
+      let newItems: GitHubSearchItem[] = [];
       const removedPrIds: number[] = [];
 
       for (const item of freshItems) {
@@ -1963,6 +2096,89 @@ Deno.serve(async (req: Request) => {
       for (const [prId] of snapMap) {
         if (!freshIdSet.has(prId)) {
           removedPrIds.push(prId);
+        }
+      }
+
+      const nowMs = Date.now();
+      const commentCheckCandidates: GitHubSearchItem[] = [];
+      const seenCheckIds = new Set<number>();
+      const addCheckCandidate = (item: GitHubSearchItem) => {
+        if (seenCheckIds.has(item.id)) return;
+        seenCheckIds.add(item.id);
+        commentCheckCandidates.push(item);
+      };
+      for (const item of newItems) addCheckCandidate(item);
+      for (const item of updatedItems) addCheckCandidate(item);
+      for (const item of freshItems) {
+        const snap = snapMap.get(item.id);
+        if (!snap) continue;
+        const last = snap.last_comment_check_at
+          ? new Date(snap.last_comment_check_at).getTime()
+          : 0;
+        if (nowMs - last >= COMMENT_RECHECK_TTL_MS) addCheckCandidate(item);
+      }
+
+      if (commentCheckCandidates.length > 0) {
+        const declineItems = commentCheckCandidates.map((item) => ({
+          id: item.id,
+          number: item.number,
+          repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+        }));
+        const declines = await fetchDeclineCommentsBatch(
+          user.access_token,
+          declineItems,
+          user.login
+        );
+
+        const newlyDeclinedIds = new Set<number>();
+        for (const item of commentCheckCandidates) {
+          const decline = declines[item.id];
+          if (!decline) continue;
+          newlyDeclinedIds.add(item.id);
+          declinedIds.add(item.id);
+          const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+          await supabase.from("pr_declines").upsert(
+            {
+              github_user_id: user.github_user_id,
+              pr_id: item.id,
+              pr_number: item.number,
+              repo_full_name: repoFullName,
+              pr_title: item.title || "",
+              pr_html_url: item.html_url || "",
+              declined_at: decline.declinedAt,
+              comment_id: decline.commentId,
+            },
+            { onConflict: "github_user_id,pr_id", ignoreDuplicates: true }
+          );
+        }
+
+        if (newlyDeclinedIds.size > 0) {
+          await supabase
+            .from("user_pr_snapshots")
+            .delete()
+            .eq("github_user_id", user.github_user_id)
+            .in("pr_id", Array.from(newlyDeclinedIds));
+
+          for (const id of newlyDeclinedIds) {
+            if (snapMap.has(id)) removedPrIds.push(id);
+            snapMap.delete(id);
+          }
+
+          freshItems = freshItems.filter((i) => !newlyDeclinedIds.has(i.id));
+          newItems = newItems.filter((i) => !newlyDeclinedIds.has(i.id));
+          updatedItems = updatedItems.filter((i) => !newlyDeclinedIds.has(i.id));
+          freshIdSet = new Set(freshItems.map((i) => i.id));
+        }
+
+        const checkedIds = commentCheckCandidates
+          .map((i) => i.id)
+          .filter((id) => !newlyDeclinedIds.has(id));
+        if (checkedIds.length > 0) {
+          await supabase
+            .from("user_pr_snapshots")
+            .update({ last_comment_check_at: new Date(nowMs).toISOString() })
+            .eq("github_user_id", user.github_user_id)
+            .in("pr_id", checkedIds);
         }
       }
 
@@ -2073,15 +2289,37 @@ Deno.serve(async (req: Request) => {
         Date.now() - STATS_WINDOW_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
 
-      const { data: reviews } = await supabase
-        .from("pr_reviews")
-        .select(
-          "pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
-        )
-        .eq("github_user_id", user.github_user_id)
-        .gte("submitted_at", windowStartIso);
+      const [{ data: reviews }, { data: declines }] = await Promise.all([
+        supabase
+          .from("pr_reviews")
+          .select(
+            "pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
+          )
+          .eq("github_user_id", user.github_user_id)
+          .gte("submitted_at", windowStartIso),
+        supabase
+          .from("pr_declines")
+          .select("pr_id, repo_full_name, declined_at")
+          .eq("github_user_id", user.github_user_id)
+          .gte("declined_at", windowStartIso),
+      ]);
 
-      const rows = reviews || [];
+      const declineRows = (declines || []) as Array<{
+        pr_id: number;
+        repo_full_name: string;
+      }>;
+      const declinedPrIds = new Set<number>(declineRows.map((d) => d.pr_id));
+      const declinedByRepo = new Map<string, number>();
+      for (const d of declineRows) {
+        declinedByRepo.set(
+          d.repo_full_name,
+          (declinedByRepo.get(d.repo_full_name) || 0) + 1
+        );
+      }
+
+      const rows = (reviews || []).filter(
+        (r: { pr_id: number }) => !declinedPrIds.has(r.pr_id)
+      );
 
       interface IncludedPr {
         pr_id: number;
@@ -2154,6 +2392,20 @@ Deno.serve(async (req: Request) => {
         return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
       }
 
+      for (const repo of declinedByRepo.keys()) {
+        if (!byRepo.has(repo)) {
+          byRepo.set(repo, {
+            repo,
+            total: 0,
+            approved: 0,
+            changesRequested: 0,
+            commented: 0,
+            latencies: [],
+            prMap: new Map(),
+          });
+        }
+      }
+
       const perRepo = Array.from(byRepo.values()).map((agg) => {
         const allPrs = Array.from(agg.prMap.values()).sort(
           (a, b) => b.latency_seconds - a.latency_seconds
@@ -2173,6 +2425,7 @@ Deno.serve(async (req: Request) => {
           approved: agg.approved,
           changes_requested: agg.changesRequested,
           commented: agg.commented,
+          declined: declinedByRepo.get(agg.repo) || 0,
           p90_latency_seconds: p90,
           latency_sample_size: latencies.length,
           prs,
@@ -2180,7 +2433,7 @@ Deno.serve(async (req: Request) => {
         };
       });
 
-      perRepo.sort((a, b) => b.total_reviews - a.total_reviews);
+      perRepo.sort((a, b) => (b.total_reviews + b.declined) - (a.total_reviews + a.declined));
 
       const allLatencies = perRepo.flatMap((r) =>
         r.prs.map((p) => p.latency_seconds)
@@ -2194,6 +2447,7 @@ Deno.serve(async (req: Request) => {
           0
         ),
         commented: perRepo.reduce((s, r) => s + r.commented, 0),
+        declined: declinedPrIds.size,
         p90_latency_seconds: percentile(allLatencies, 90),
         latency_sample_size: allLatencies.length,
       };

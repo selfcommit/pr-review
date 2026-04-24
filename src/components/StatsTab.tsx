@@ -79,6 +79,12 @@ function StatRow({
         sublabel={total > 0 ? `${formatPercent(summary.changes_requested, total)} of total` : undefined}
       />
       <StatCard
+        label="Declined"
+        value={summary.declined}
+        tone="slate"
+        sublabel="Comment :runner: to decline"
+      />
+      <StatCard
         label={sampleLabel ? `P90 Review Time (${sampleLabel})` : 'P90 Review Time'}
         value={formatLatency(summary.p90_latency_seconds)}
         tone={p90Tone(summary.p90_latency_seconds)}
@@ -116,6 +122,7 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           approved: repo.approved,
           changes_requested: repo.changes_requested,
           commented: repo.commented,
+          declined: repo.declined,
           p90_latency_seconds: repo.p90_latency_seconds,
           latency_sample_size: repo.latency_sample_size,
         }}
@@ -223,7 +230,7 @@ function StatsTab() {
 
   const windowDays = data?.window_days ?? 120
 
-  if (!data || data.summary.total_reviews === 0) {
+  if (!data || (data.summary.total_reviews === 0 && data.summary.declined === 0)) {
     return (
       <div className="stats-empty">
         <h2>No review data yet</h2>
