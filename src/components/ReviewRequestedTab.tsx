@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { PullRequest } from '../types/pullRequest'
-import { groupByOrg, mapItem } from '../types/pullRequest'
+import { mapItem } from '../types/pullRequest'
 import { isOverdue } from '../utils/time'
 import { primeAudio } from '../utils/notificationSound'
 import PRCard from './PRCard'
@@ -42,7 +42,6 @@ function groupByUrgency(prs: PullRequest[]): UrgencyGroup[] {
 
 interface ReviewRequestedTabProps {
   reviewRequestedItems: Array<Record<string, unknown>>
-  reviewedItems: Array<Record<string, unknown>>
   reviewTimestamps: Record<number, string>
   soundEnabled: boolean
   onSoundToggle: (value: boolean) => void
@@ -61,7 +60,6 @@ function readTeamApprovedFilter(): boolean {
 
 function ReviewRequestedTab({
   reviewRequestedItems,
-  reviewedItems,
   reviewTimestamps,
   soundEnabled,
   onSoundToggle,
@@ -97,13 +95,6 @@ function ReviewRequestedTab({
 
   const urgencyGroups = groupByUrgency(reviewPRs)
   const overdueCount = urgencyGroups.find(g => g.label === 'overdue')?.prs.length || 0
-
-  const reviewRequestedIds = new Set(reviewRequestedItems.map(it => it.id as number))
-  const filteredReviewed = reviewedItems.filter(
-    item => !reviewRequestedIds.has(item.id as number)
-  )
-  const reviewedPRs = filteredReviewed.map(mapItem)
-  const reviewedByOrg = groupByOrg(reviewedPRs)
 
   return (
     <>
@@ -211,28 +202,6 @@ function ReviewRequestedTab({
         </div>
       )}
 
-      <div className="section-block section-reviewed">
-        <h2 className="section-title section-title-teal">Recently Reviewed</h2>
-        {reviewedByOrg.length === 0 ? (
-          <p className="section-empty-message">No recently reviewed PRs found.</p>
-        ) : (
-          <div className="orgs-container">
-            {reviewedByOrg.map(orgData => (
-              <div key={orgData.org} className="org-section">
-                <div className="org-header">
-                  <h2 className="org-name">{orgData.org}</h2>
-                  <span className="org-count">{orgData.pullRequests.length} PR{orgData.pullRequests.length !== 1 ? 's' : ''}</span>
-                </div>
-                <div className="prs-list">
-                  {orgData.pullRequests.map(pr => (
-                    <PRCard key={pr.id} pr={pr} showState />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </>
   )
 }

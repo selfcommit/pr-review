@@ -2460,6 +2460,96 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (path === "activity") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      const url = new URL(req.url);
+      const daysParam = parseInt(url.searchParams.get("days") || "7", 10);
+      const days = Math.min(Math.max(daysParam, 1), 120);
+
+      const windowStart = new Date(
+        Date.now() - days * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      const [{ data: reviews }, { data: declines }] = await Promise.all([
+        supabase
+          .from("pr_reviews")
+          .select(
+            "pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at"
+          )
+          .eq("github_user_id", user.github_user_id)
+          .gte("submitted_at", windowStart)
+          .order("submitted_at", { ascending: false }),
+        supabase
+          .from("pr_declines")
+          .select(
+            "pr_id, pr_number, pr_title, pr_html_url, repo_full_name, declined_at"
+          )
+          .eq("github_user_id", user.github_user_id)
+          .gte("declined_at", windowStart)
+          .order("declined_at", { ascending: false }),
+      ]);
+
+      interface ActivityItem {
+        pr_id: number;
+        pr_number: number;
+        pr_title: string;
+        pr_html_url: string;
+        repo_full_name: string;
+        event_type: string;
+        timestamp: string;
+      }
+
+      const events: ActivityItem[] = [];
+
+      for (const r of reviews || []) {
+        events.push({
+          pr_id: r.pr_id as number,
+          pr_number: r.pr_number as number,
+          pr_title: (r.pr_title as string) || "",
+          pr_html_url: (r.pr_html_url as string) || "",
+          repo_full_name: (r.repo_full_name as string) || "",
+          event_type: (r.review_state as string) || "commented",
+          timestamp: r.submitted_at as string,
+        });
+      }
+
+      for (const d of declines || []) {
+        events.push({
+          pr_id: d.pr_id as number,
+          pr_number: d.pr_number as number,
+          pr_title: (d.pr_title as string) || "",
+          pr_html_url: (d.pr_html_url as string) || "",
+          repo_full_name: (d.repo_full_name as string) || "",
+          event_type: "declined",
+          timestamp: d.declined_at as string,
+        });
+      }
+
+      events.sort(
+        (a, b) =>
+          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+
+      return jsonResponse({ events, days });
+    }
+
     if (path === "audio-state") {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {

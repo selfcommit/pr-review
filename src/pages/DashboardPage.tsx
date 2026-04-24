@@ -13,6 +13,7 @@ import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import ReviewRequestedTab from '../components/ReviewRequestedTab'
 import MyPrsTab from '../components/MyPrsTab'
+import RecentActivity from '../components/RecentActivity'
 import StatsTab from '../components/StatsTab'
 import NotificationToast from '../components/NotificationToast'
 import NotificationPermissionBanner from '../components/NotificationPermissionBanner'
@@ -47,13 +48,12 @@ interface ToastMessage {
 }
 
 type TabId = 'pull-requests' | 'stats' | 'organizations'
-type PRSubTab = 'review-requested' | 'mine'
+type PRSubTab = 'review-requested' | 'activity' | 'mine'
 
 function DashboardPage() {
   const navigate = useNavigate()
   const [user, setUser] = useState<GitHubUser | null>(null)
   const [reviewRequestedItems, setReviewRequestedItems] = useState<Array<Record<string, unknown>>>([])
-  const [reviewedItems, setReviewedItems] = useState<Array<Record<string, unknown>>>([])
   const [reviewTimestamps, setReviewTimestamps] = useState<Record<number, string>>({})
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -336,7 +336,6 @@ function DashboardPage() {
     }
 
     setReviewRequestedItems(Array.isArray(reviewRequested.items) ? reviewRequested.items : [])
-    setReviewedItems(Array.isArray(reviewed.items) ? reviewed.items : [])
     setReviewTimestamps(data.reviewTimestamps || {})
   }
 
@@ -510,6 +509,12 @@ function DashboardPage() {
                   )}
                 </button>
                 <button
+                  className={`sub-tab-button ${prSubTab === 'activity' ? 'sub-tab-button-active' : ''}`}
+                  onClick={() => setPrSubTab('activity')}
+                >
+                  Recent Activity
+                </button>
+                <button
                   className={`sub-tab-button ${prSubTab === 'mine' ? 'sub-tab-button-active' : ''}`}
                   onClick={() => setPrSubTab('mine')}
                 >
@@ -544,7 +549,6 @@ function DashboardPage() {
                   ) : (
                     <ReviewRequestedTab
                       reviewRequestedItems={reviewRequestedItems}
-                      reviewedItems={reviewedItems}
                       reviewTimestamps={reviewTimestamps}
                       soundEnabled={soundEnabled}
                       onSoundToggle={setSoundEnabled}
@@ -553,6 +557,8 @@ function DashboardPage() {
                   )}
                 </>
               )}
+
+              {prSubTab === 'activity' && <RecentActivity />}
 
               {prSubTab === 'mine' && <MyPrsTab />}
             </>
