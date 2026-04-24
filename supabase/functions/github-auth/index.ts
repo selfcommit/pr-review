@@ -2329,6 +2329,7 @@ Deno.serve(async (req: Request) => {
         latency_seconds: number;
         review_state: string;
         submitted_at: string;
+        repo: string;
       }
 
       interface RepoAgg {
@@ -2380,6 +2381,7 @@ Deno.serve(async (req: Request) => {
               latency_seconds: lat,
               review_state: state,
               submitted_at: r.submitted_at as string,
+              repo: repo,
             });
           }
         }
@@ -2435,9 +2437,24 @@ Deno.serve(async (req: Request) => {
 
       perRepo.sort((a, b) => (b.total_reviews + b.declined) - (a.total_reviews + a.declined));
 
-      const allLatencies = perRepo.flatMap((r) =>
-        r.prs.map((p) => p.latency_seconds)
+      const allGlobalPrs = perRepo.flatMap((r) =>
+        [...r.prs, ...r.excluded_prs]
       );
+      const allLatencies = allGlobalPrs.map((p) => p.latency_seconds);
+      const globalP90 = percentile(allLatencies, 90);
+
+      const summaryExcludedPrs =
+        globalP90 === null
+          ? []
+          : allGlobalPrs
+              .filter((p) => p.latency_seconds > globalP90)
+              .sort((a, b) => b.latency_seconds - a.latency_seconds);
+      const summaryPrs =
+        globalP90 === null
+          ? allGlobalPrs.sort((a, b) => b.latency_seconds - a.latency_seconds)
+          : allGlobalPrs
+              .filter((p) => p.latency_seconds <= globalP90)
+              .sort((a, b) => b.latency_seconds - a.latency_seconds);
 
       const summary = {
         total_reviews: perRepo.reduce((s, r) => s + r.total_reviews, 0),
@@ -2448,8 +2465,10 @@ Deno.serve(async (req: Request) => {
         ),
         commented: perRepo.reduce((s, r) => s + r.commented, 0),
         declined: declinedPrIds.size,
-        p90_latency_seconds: percentile(allLatencies, 90),
+        p90_latency_seconds: globalP90,
         latency_sample_size: allLatencies.length,
+        prs: summaryPrs,
+        excluded_prs: summaryExcludedPrs,
       };
 
       return jsonResponse({

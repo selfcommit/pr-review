@@ -1,4 +1,4 @@
-interface StatsPR {
+export interface StatsPR {
   pr_id: number
   pr_number: number
   title: string
@@ -6,6 +6,7 @@ interface StatsPR {
   latency_seconds: number
   review_state: string
   submitted_at: string
+  repo?: string
 }
 
 export interface RepoStats {
@@ -29,6 +30,8 @@ export interface StatsSummary {
   declined: number
   p90_latency_seconds: number | null
   latency_sample_size: number
+  prs?: StatsPR[]
+  excluded_prs?: StatsPR[]
 }
 
 export interface StatsResponse {

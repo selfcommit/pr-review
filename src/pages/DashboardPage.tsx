@@ -15,6 +15,7 @@ import ReviewRequestedTab from '../components/ReviewRequestedTab'
 import MyPrsTab from '../components/MyPrsTab'
 import RecentActivity from '../components/RecentActivity'
 import StatsTab from '../components/StatsTab'
+import OverallStatsBar from '../components/OverallStatsBar'
 import NotificationToast from '../components/NotificationToast'
 import NotificationPermissionBanner from '../components/NotificationPermissionBanner'
 import './DashboardPage.css'
@@ -498,6 +499,7 @@ function DashboardPage() {
 
           {activeTab === 'pull-requests' && (
             <>
+              <OverallStatsBar />
               <div className="sub-tab-bar">
                 <button
                   className={`sub-tab-button ${prSubTab === 'review-requested' ? 'sub-tab-button-active' : ''}`}

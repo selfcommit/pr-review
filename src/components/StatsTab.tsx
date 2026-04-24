@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useState } from 'react'
 import { apiGet } from '../utils/api'
-import { RepoStats, StatsResponse, StatsSummary, formatLatency } from '../types/stats'
+import { RepoStats, StatsPR, StatsResponse, StatsSummary, formatLatency } from '../types/stats'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
@@ -55,7 +55,7 @@ function p90Tone(latencySeconds: number | null | undefined): StatTone {
   return 'green'
 }
 
-function StatRow({
+export function StatRow({
   summary,
   sampleLabel,
   includedPrs,
@@ -112,15 +112,99 @@ function StatRow({
   )
 }
 
-function RepoStatsCard({ repo }: { repo: RepoStats }) {
+export function PrDrawer({
+  prs,
+  excludedPrs,
+  p90LatencySeconds,
+  latencySampleSize,
+  showRepo,
+}: {
+  prs: StatsPR[]
+  excludedPrs: StatsPR[]
+  p90LatencySeconds: number | null
+  latencySampleSize: number
+  showRepo?: boolean
+}) {
   const [open, setOpen] = useState(false)
-  const hasLatency = repo.latency_sample_size > 0
-  const excludedPrs = (repo.excluded_prs || []).slice().sort(
-    (a, b) => b.latency_seconds - a.latency_seconds
-  )
-  const hasExcluded = excludedPrs.length > 0
-  const totalPrs = repo.prs.length + excludedPrs.length
+  const hasLatency = latencySampleSize > 0
+  const sorted = excludedPrs.slice().sort((a, b) => b.latency_seconds - a.latency_seconds)
+  const hasExcluded = sorted.length > 0
+  const totalPrs = prs.length + sorted.length
 
+  if (!hasLatency || totalPrs === 0) return null
+
+  const rowClass = showRepo ? 'repo-stats-pr-row repo-stats-pr-row--with-repo' : 'repo-stats-pr-row'
+  const excludedRowClass = showRepo
+    ? 'repo-stats-pr-row repo-stats-pr-row--with-repo repo-stats-pr-row--excluded'
+    : 'repo-stats-pr-row repo-stats-pr-row--excluded'
+
+  const repoShort = (r?: string) => {
+    if (!r) return ''
+    const parts = r.split('/')
+    return parts[parts.length - 1]
+  }
+
+  return (
+    <>
+      <button
+        className="repo-stats-drawer-toggle"
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? 'Hide PRs' : `View ${totalPrs} PR${totalPrs === 1 ? '' : 's'}`}
+      </button>
+
+      {open && (
+        <div className="repo-stats-pr-list">
+          {sorted.map(pr => (
+            <a
+              key={`excluded-${pr.pr_id}`}
+              href={pr.html_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={excludedRowClass}
+            >
+              <span className="repo-stats-pr-number">#{pr.pr_number}</span>
+              {showRepo && <span className="repo-stats-pr-repo">{repoShort(pr.repo)}</span>}
+              <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
+              <span className={`repo-stats-pr-state state-${pr.review_state}`}>
+                {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
+              </span>
+              <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
+            </a>
+          ))}
+
+          {hasExcluded && prs.length > 0 && (
+            <div className="repo-stats-pr-cutline" role="separator">
+              <span className="repo-stats-pr-cutline-label">
+                P90 cutoff · {formatLatency(p90LatencySeconds)}
+              </span>
+            </div>
+          )}
+
+          {prs.map(pr => (
+            <a
+              key={pr.pr_id}
+              href={pr.html_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={rowClass}
+            >
+              <span className="repo-stats-pr-number">#{pr.pr_number}</span>
+              {showRepo && <span className="repo-stats-pr-repo">{repoShort(pr.repo)}</span>}
+              <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
+              <span className={`repo-stats-pr-state state-${pr.review_state}`}>
+                {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
+              </span>
+              <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+function RepoStatsCard({ repo }: { repo: RepoStats }) {
   return (
     <div className="repo-stats-card">
       <div className="repo-stats-header">
@@ -147,60 +231,12 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
         includedPrs={repo.prs}
       />
 
-      {hasLatency && totalPrs > 0 && (
-        <button
-          className="repo-stats-drawer-toggle"
-          onClick={() => setOpen(o => !o)}
-        >
-          {open ? 'Hide PRs' : `View ${totalPrs} PR${totalPrs === 1 ? '' : 's'}`}
-        </button>
-      )}
-
-      {open && hasLatency && (
-        <div className="repo-stats-pr-list">
-          {excludedPrs.map(pr => (
-            <a
-              key={`excluded-${pr.pr_id}`}
-              href={pr.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="repo-stats-pr-row repo-stats-pr-row--excluded"
-            >
-              <span className="repo-stats-pr-number">#{pr.pr_number}</span>
-              <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
-              <span className={`repo-stats-pr-state state-${pr.review_state}`}>
-                {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
-              </span>
-              <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
-            </a>
-          ))}
-
-          {hasExcluded && repo.prs.length > 0 && (
-            <div className="repo-stats-pr-cutline" role="separator">
-              <span className="repo-stats-pr-cutline-label">
-                P90 cutoff · {formatLatency(repo.p90_latency_seconds)}
-              </span>
-            </div>
-          )}
-
-          {repo.prs.map(pr => (
-            <a
-              key={pr.pr_id}
-              href={pr.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="repo-stats-pr-row"
-            >
-              <span className="repo-stats-pr-number">#{pr.pr_number}</span>
-              <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
-              <span className={`repo-stats-pr-state state-${pr.review_state}`}>
-                {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
-              </span>
-              <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
-            </a>
-          ))}
-        </div>
-      )}
+      <PrDrawer
+        prs={repo.prs}
+        excludedPrs={repo.excluded_prs || []}
+        p90LatencySeconds={repo.p90_latency_seconds}
+        latencySampleSize={repo.latency_sample_size}
+      />
     </div>
   )
 }
@@ -264,20 +300,11 @@ function StatsTab() {
     <div className="stats-tab">
       <div className="stats-section">
         <div className="stats-section-header">
-          <h2 className="stats-section-title">All Repositories (last {windowDays} days)</h2>
+          <h2 className="stats-section-title">Per Repository</h2>
           <button className="stats-refresh-btn" onClick={load}>
-            Refresh
+            Refresh Stats
           </button>
         </div>
-        <StatRow
-          summary={data.summary}
-          sampleLabel={`${data.summary.latency_sample_size} samples`}
-          includedPrs={data.repos.flatMap(r => r.prs)}
-        />
-      </div>
-
-      <div className="stats-section">
-        <h2 className="stats-section-title">Per Repository</h2>
         <div className="repo-stats-list">
           {data.repos.map(repo => (
             <RepoStatsCard key={repo.repo} repo={repo} />
