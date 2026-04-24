@@ -143,7 +143,7 @@ export function PrDrawer({
         className="repo-stats-drawer-toggle"
         onClick={() => setOpen(o => !o)}
       >
-        {open ? 'Hide PRs' : `View ${totalPrs} PR${totalPrs === 1 ? '' : 's'}`}
+        {open ? 'Hide' : 'How was this calculated?'}
       </button>
 
       {open && (
