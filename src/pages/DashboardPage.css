@@ -1544,12 +1544,43 @@
   text-align: right;
 }
 
-.repo-stats-drawer-toggle-secondary {
-  color: #94a3b8;
+.repo-stats-pr-row--excluded {
+  opacity: 0.55;
 }
 
-.repo-stats-drawer-toggle-secondary:hover {
-  color: #cbd5e1;
+.repo-stats-pr-row--excluded:hover {
+  opacity: 0.85;
+}
+
+.repo-stats-pr-cutline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0;
+  padding: 0 4px;
+}
+
+.repo-stats-pr-cutline::before,
+.repo-stats-pr-cutline::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(148, 163, 184, 0.35) 0,
+    rgba(148, 163, 184, 0.35) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.repo-stats-pr-cutline-label {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .stats-empty {

@@ -38,10 +38,12 @@ function StatRow({ summary, sampleLabel }: { summary: StatsSummary; sampleLabel?
 
 function RepoStatsCard({ repo }: { repo: RepoStats }) {
   const [open, setOpen] = useState(false)
-  const [excludedOpen, setExcludedOpen] = useState(false)
   const hasLatency = repo.latency_sample_size > 0
-  const excludedPrs = repo.excluded_prs || []
+  const excludedPrs = (repo.excluded_prs || []).slice().sort(
+    (a, b) => b.latency_seconds - a.latency_seconds
+  )
   const hasExcluded = excludedPrs.length > 0
+  const totalPrs = repo.prs.length + excludedPrs.length
 
   return (
     <div className="repo-stats-card">
@@ -67,24 +69,24 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
         }}
       />
 
-      {hasLatency && (
+      {hasLatency && totalPrs > 0 && (
         <button
           className="repo-stats-drawer-toggle"
           onClick={() => setOpen(o => !o)}
         >
-          {open ? 'Hide PRs used in P90' : `View ${repo.prs.length} PR${repo.prs.length === 1 ? '' : 's'} used in P90`}
+          {open ? 'Hide PRs' : `View ${totalPrs} PR${totalPrs === 1 ? '' : 's'}`}
         </button>
       )}
 
       {open && hasLatency && (
         <div className="repo-stats-pr-list">
-          {repo.prs.map(pr => (
+          {excludedPrs.map(pr => (
             <a
-              key={pr.pr_id}
+              key={`excluded-${pr.pr_id}`}
               href={pr.html_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="repo-stats-pr-row"
+              className="repo-stats-pr-row repo-stats-pr-row--excluded"
             >
               <span className="repo-stats-pr-number">#{pr.pr_number}</span>
               <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
@@ -94,23 +96,16 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
               <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
             </a>
           ))}
-        </div>
-      )}
 
-      {hasExcluded && (
-        <button
-          className="repo-stats-drawer-toggle repo-stats-drawer-toggle-secondary"
-          onClick={() => setExcludedOpen(o => !o)}
-        >
-          {excludedOpen
-            ? 'Hide PRs beyond P90'
-            : `Show ${excludedPrs.length} PR${excludedPrs.length === 1 ? '' : 's'} beyond P90`}
-        </button>
-      )}
+          {hasExcluded && repo.prs.length > 0 && (
+            <div className="repo-stats-pr-cutline" role="separator">
+              <span className="repo-stats-pr-cutline-label">
+                P90 cutoff · {formatLatency(repo.p90_latency_seconds)}
+              </span>
+            </div>
+          )}
 
-      {excludedOpen && hasExcluded && (
-        <div className="repo-stats-pr-list">
-          {excludedPrs.map(pr => (
+          {repo.prs.map(pr => (
             <a
               key={pr.pr_id}
               href={pr.html_url}
