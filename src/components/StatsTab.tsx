@@ -62,15 +62,16 @@ export function StatRow({
 }: {
   summary: StatsSummary
   sampleLabel?: string
-  includedPrs: { latency_seconds: number }[]
+  includedPrs: { latency_seconds: number | null }[]
 }) {
   const total = summary.total_reviews
-  const onTargetCount = includedPrs.filter(p => p.latency_seconds <= ON_TARGET_SECONDS).length
-  const hasIncluded = includedPrs.length > 0
+  const timedPrs = includedPrs.filter((p): p is { latency_seconds: number } => p.latency_seconds !== null)
+  const onTargetCount = timedPrs.filter(p => p.latency_seconds <= ON_TARGET_SECONDS).length
+  const hasTimed = timedPrs.length > 0
 
-  const p90Sublabel = hasIncluded ? (
+  const p90Sublabel = hasTimed ? (
     <span className="stat-card-sublabel-accent">
-      {formatPercent(onTargetCount, includedPrs.length)} of your reviews took less than 24 hours
+      {formatPercent(onTargetCount, timedPrs.length)} of your reviews took less than 24 hours
     </span>
   ) : null
 
@@ -111,22 +112,23 @@ export function PrDrawer({
   prs,
   excludedPrs,
   p90LatencySeconds,
-  latencySampleSize,
   showRepo,
 }: {
   prs: StatsPR[]
   excludedPrs: StatsPR[]
   p90LatencySeconds: number | null
-  latencySampleSize: number
   showRepo?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  const hasLatency = latencySampleSize > 0
-  const sorted = excludedPrs.slice().sort((a, b) => b.latency_seconds - a.latency_seconds)
+  const sorted = excludedPrs.filter(p => p.latency_seconds !== null).slice().sort(
+    (a, b) => (b.latency_seconds as number) - (a.latency_seconds as number)
+  )
   const hasExcluded = sorted.length > 0
-  const totalPrs = prs.length + sorted.length
+  const timedPrs = prs.filter(p => p.latency_seconds !== null)
+  const unrequestedPrs = prs.filter(p => p.latency_seconds === null)
+  const totalPrs = timedPrs.length + sorted.length + unrequestedPrs.length
 
-  if (!hasLatency || totalPrs === 0) return null
+  if (totalPrs === 0) return null
 
   const rowClass = 'repo-stats-pr-row'
   const excludedRowClass = 'repo-stats-pr-row repo-stats-pr-row--excluded'
@@ -168,7 +170,7 @@ export function PrDrawer({
             </a>
           ))}
 
-          {hasExcluded && prs.length > 0 && (
+          {hasExcluded && timedPrs.length > 0 && (
             <div className="repo-stats-pr-cutline" role="separator">
               <span className="repo-stats-pr-cutline-label">
                 P90 cutoff · {formatLatency(p90LatencySeconds)}
@@ -176,7 +178,7 @@ export function PrDrawer({
             </div>
           )}
 
-          {prs.map(pr => (
+          {timedPrs.map(pr => (
             <a
               key={pr.review_id}
               href={pr.html_url}
@@ -195,6 +197,35 @@ export function PrDrawer({
               <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
             </a>
           ))}
+
+          {unrequestedPrs.length > 0 && (
+            <>
+              {(hasExcluded || timedPrs.length > 0) && (
+                <div className="repo-stats-pr-cutline" role="separator">
+                  <span className="repo-stats-pr-cutline-label">Unrequested Reviews</span>
+                </div>
+              )}
+              {unrequestedPrs.map(pr => (
+                <a
+                  key={`unrequested-${pr.review_id}`}
+                  href={pr.html_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={rowClass}
+                >
+                  <span className="repo-stats-pr-number">#{pr.pr_number}</span>
+                  <span className="repo-stats-pr-title">
+                    {showRepo && <span className="repo-stats-pr-repo-prefix">{repoShort(pr.repo)}</span>}
+                    {pr.title || '(no title)'}
+                  </span>
+                  <span className={`repo-stats-pr-state state-${pr.review_state}`}>
+                    {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
+                  </span>
+                  <span className="repo-stats-pr-latency repo-stats-pr-latency--unrequested">Unrequested Review</span>
+                </a>
+              ))}
+            </>
+          )}
         </div>
       )}
     </>
@@ -208,7 +239,7 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
         <div className="repo-stats-title">{repo.repo}</div>
         <div className="repo-stats-subtitle">
           {repo.latency_sample_size === 0
-            ? 'No completed reviews with latency yet'
+            ? 'No completed reviews yet'
             : repo.latency_sample_size < 5
               ? `Limited data (${repo.latency_sample_size} samples)`
               : `${repo.latency_sample_size} samples`}
@@ -232,7 +263,6 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
         prs={repo.prs}
         excludedPrs={repo.excluded_prs || []}
         p90LatencySeconds={repo.p90_latency_seconds}
-        latencySampleSize={repo.latency_sample_size}
       />
     </div>
   )

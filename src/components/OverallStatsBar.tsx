@@ -48,7 +48,6 @@ function OverallStatsBar() {
         prs={prs}
         excludedPrs={excludedPrs}
         p90LatencySeconds={summary.p90_latency_seconds}
-        latencySampleSize={summary.latency_sample_size}
         showRepo
       />
     </div>

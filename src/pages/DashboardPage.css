@@ -1568,6 +1568,14 @@
   text-align: right;
 }
 
+.repo-stats-pr-latency--unrequested {
+  color: #64748b;
+  font-weight: 500;
+  font-style: italic;
+  font-size: 12px;
+  min-width: auto;
+}
+
 .repo-stats-pr-row--excluded {
   opacity: 0.55;
 }

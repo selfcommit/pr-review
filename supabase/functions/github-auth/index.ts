@@ -2351,7 +2351,7 @@ Deno.serve(async (req: Request) => {
         pr_number: number;
         title: string;
         html_url: string;
-        latency_seconds: number;
+        latency_seconds: number | null;
         review_state: string;
         submitted_at: string;
         repo: string;
@@ -2389,18 +2389,15 @@ Deno.serve(async (req: Request) => {
         else agg.commented += 1;
 
         const lat = r.latency_seconds as number | null;
-        if (
-          typeof lat === "number" &&
-          lat >= 0 &&
-          (state === "approved" || state === "changes_requested")
-        ) {
+        if (state === "approved" || state === "changes_requested") {
           agg.reviewEvents.push({
             review_id: r.review_id as number,
             pr_id: r.pr_id as number,
             pr_number: r.pr_number as number,
             title: (r.pr_title as string) || "",
             html_url: (r.pr_html_url as string) || "",
-            latency_seconds: lat,
+            latency_seconds:
+              typeof lat === "number" && lat >= 0 ? lat : null,
             review_state: state,
             submitted_at: r.submitted_at as string,
             repo: repo,
@@ -2429,18 +2426,24 @@ Deno.serve(async (req: Request) => {
       }
 
       const perRepo = Array.from(byRepo.values()).map((agg) => {
-        const allPrs = agg.reviewEvents.slice().sort(
-          (a, b) => b.latency_seconds - a.latency_seconds
+        const timed = agg.reviewEvents.filter(
+          (p) => p.latency_seconds !== null
+        ) as (IncludedPr & { latency_seconds: number })[];
+        const unrequested = agg.reviewEvents.filter(
+          (p) => p.latency_seconds === null
         );
-        const latencies = allPrs.map((p) => p.latency_seconds);
+        timed.sort((a, b) => b.latency_seconds - a.latency_seconds);
+        const latencies = timed.map((p) => p.latency_seconds);
         const p90 = percentile(latencies, 90);
         const excluded_prs =
           p90 === null
             ? []
-            : allPrs.filter((p) => p.latency_seconds > p90);
-        const prs = p90 === null
-          ? allPrs
-          : allPrs.filter((p) => p.latency_seconds <= p90);
+            : timed.filter((p) => p.latency_seconds > p90);
+        const includedTimed =
+          p90 === null
+            ? timed
+            : timed.filter((p) => p.latency_seconds <= p90);
+        const prs = [...includedTimed, ...unrequested];
         return {
           repo: agg.repo,
           total_reviews: agg.total,
@@ -2449,7 +2452,7 @@ Deno.serve(async (req: Request) => {
           commented: agg.commented,
           declined: declinedByRepo.get(agg.repo) || 0,
           p90_latency_seconds: p90,
-          latency_sample_size: latencies.length,
+          latency_sample_size: agg.reviewEvents.length,
           prs,
           excluded_prs,
         };
@@ -2460,21 +2463,33 @@ Deno.serve(async (req: Request) => {
       const allGlobalPrs = perRepo.flatMap((r) =>
         [...r.prs, ...r.excluded_prs]
       );
-      const allLatencies = allGlobalPrs.map((p) => p.latency_seconds);
+      const allGlobalTimed = allGlobalPrs.filter(
+        (p) => p.latency_seconds !== null
+      ) as (IncludedPr & { latency_seconds: number })[];
+      const allGlobalUnrequested = allGlobalPrs.filter(
+        (p) => p.latency_seconds === null
+      );
+      const allLatencies = allGlobalTimed.map((p) => p.latency_seconds);
       const globalP90 = percentile(allLatencies, 90);
 
       const summaryExcludedPrs =
         globalP90 === null
           ? []
-          : allGlobalPrs
+          : allGlobalTimed
               .filter((p) => p.latency_seconds > globalP90)
               .sort((a, b) => b.latency_seconds - a.latency_seconds);
-      const summaryPrs =
+      const summaryIncludedTimed =
         globalP90 === null
-          ? allGlobalPrs.sort((a, b) => b.latency_seconds - a.latency_seconds)
-          : allGlobalPrs
+          ? allGlobalTimed.sort(
+              (a, b) => b.latency_seconds - a.latency_seconds
+            )
+          : allGlobalTimed
               .filter((p) => p.latency_seconds <= globalP90)
               .sort((a, b) => b.latency_seconds - a.latency_seconds);
+      const summaryPrs = [
+        ...summaryIncludedTimed,
+        ...allGlobalUnrequested,
+      ];
 
       const summary = {
         total_reviews: perRepo.reduce((s, r) => s + r.total_reviews, 0),
@@ -2486,7 +2501,7 @@ Deno.serve(async (req: Request) => {
         commented: perRepo.reduce((s, r) => s + r.commented, 0),
         declined: declinedPrIds.size,
         p90_latency_seconds: globalP90,
-        latency_sample_size: allLatencies.length,
+        latency_sample_size: allGlobalPrs.length,
         prs: summaryPrs,
         excluded_prs: summaryExcludedPrs,
       };

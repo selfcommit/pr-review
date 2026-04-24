@@ -4,7 +4,7 @@ export interface StatsPR {
   pr_number: number
   title: string
   html_url: string
-  latency_seconds: number
+  latency_seconds: number | null
   review_state: string
   submitted_at: string
   repo?: string
