@@ -1011,7 +1011,7 @@ function snapshotChanged(snap: SnapshotRow, item: GitHubSearchItem): boolean {
     snap.draft !== fields.draft ||
     snap.title !== fields.title ||
     snap.pull_request_merged !== fields.pull_request_merged ||
-    snap.pr_updated_at !== fields.pr_updated_at
+    new Date(snap.pr_updated_at).getTime() !== new Date(fields.pr_updated_at).getTime()
   );
 }
 
