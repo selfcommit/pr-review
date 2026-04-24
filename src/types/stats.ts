@@ -8,16 +8,6 @@ interface StatsPR {
   submitted_at: string
 }
 
-export interface ExcludedStatsPR {
-  pr_id: number
-  pr_number: number
-  title: string
-  html_url: string
-  review_state: string
-  submitted_at: string
-  exclusion_reason: 'no_completion_state' | 'missing_latency' | 'superseded' | string
-}
-
 export interface RepoStats {
   repo: string
   total_reviews: number
@@ -27,20 +17,7 @@ export interface RepoStats {
   p90_latency_seconds: number | null
   latency_sample_size: number
   prs: StatsPR[]
-  excluded_prs: ExcludedStatsPR[]
-}
-
-export function exclusionReasonLabel(reason: string): string {
-  switch (reason) {
-    case 'no_completion_state':
-      return 'Comment only'
-    case 'missing_latency':
-      return 'No request timestamp'
-    case 'superseded':
-      return 'Superseded by earlier review'
-    default:
-      return 'Excluded'
-  }
+  excluded_prs: StatsPR[]
 }
 
 export interface StatsSummary {

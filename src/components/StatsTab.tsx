@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { apiGet } from '../utils/api'
-import { RepoStats, StatsResponse, StatsSummary, formatLatency, exclusionReasonLabel } from '../types/stats'
+import { RepoStats, StatsResponse, StatsSummary, formatLatency } from '../types/stats'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
@@ -103,43 +103,29 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           onClick={() => setExcludedOpen(o => !o)}
         >
           {excludedOpen
-            ? 'Hide excluded PRs'
-            : `Show ${excludedPrs.length} excluded PR${excludedPrs.length === 1 ? '' : 's'}`}
+            ? 'Hide PRs beyond P90'
+            : `Show ${excludedPrs.length} PR${excludedPrs.length === 1 ? '' : 's'} beyond P90`}
         </button>
       )}
 
       {excludedOpen && hasExcluded && (
         <div className="repo-stats-pr-list">
-          {excludedPrs.map(pr => {
-            const stateLabel =
-              pr.review_state === 'approved'
-                ? 'Approved'
-                : pr.review_state === 'changes_requested'
-                  ? 'Changes Req.'
-                  : pr.review_state === 'commented'
-                    ? 'Commented'
-                    : pr.review_state === 'dismissed'
-                      ? 'Dismissed'
-                      : pr.review_state
-            return (
-              <a
-                key={pr.pr_id}
-                href={pr.html_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="repo-stats-pr-row"
-              >
-                <span className="repo-stats-pr-number">#{pr.pr_number}</span>
-                <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
-                <span className={`repo-stats-pr-state state-${pr.review_state}`}>
-                  {stateLabel}
-                </span>
-                <span className="repo-stats-pr-exclusion">
-                  {exclusionReasonLabel(pr.exclusion_reason)}
-                </span>
-              </a>
-            )
-          })}
+          {excludedPrs.map(pr => (
+            <a
+              key={pr.pr_id}
+              href={pr.html_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="repo-stats-pr-row"
+            >
+              <span className="repo-stats-pr-number">#{pr.pr_number}</span>
+              <span className="repo-stats-pr-title">{pr.title || '(no title)'}</span>
+              <span className={`repo-stats-pr-state state-${pr.review_state}`}>
+                {pr.review_state === 'approved' ? 'Approved' : 'Changes Req.'}
+              </span>
+              <span className="repo-stats-pr-latency">{formatLatency(pr.latency_seconds)}</span>
+            </a>
+          ))}
         </div>
       )}
     </div>
