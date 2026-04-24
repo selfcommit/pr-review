@@ -2317,7 +2317,7 @@ Deno.serve(async (req: Request) => {
         supabase
           .from("pr_reviews")
           .select(
-            "pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
+            "review_id, pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
           )
           .eq("github_user_id", user.github_user_id)
           .gte("submitted_at", windowStartIso),
@@ -2346,6 +2346,7 @@ Deno.serve(async (req: Request) => {
       );
 
       interface IncludedPr {
+        review_id: number;
         pr_id: number;
         pr_number: number;
         title: string;
@@ -2362,8 +2363,7 @@ Deno.serve(async (req: Request) => {
         approved: number;
         changesRequested: number;
         commented: number;
-        latencies: number[];
-        prMap: Map<number, IncludedPr>;
+        reviewEvents: IncludedPr[];
       }
 
       const byRepo = new Map<string, RepoAgg>();
@@ -2378,8 +2378,7 @@ Deno.serve(async (req: Request) => {
             approved: 0,
             changesRequested: 0,
             commented: 0,
-            latencies: [],
-            prMap: new Map(),
+            reviewEvents: [],
           };
           byRepo.set(repo, agg);
         }
@@ -2390,24 +2389,22 @@ Deno.serve(async (req: Request) => {
         else agg.commented += 1;
 
         const lat = r.latency_seconds as number | null;
-        if (typeof lat === "number" && lat >= 0) {
-          const existingPr = agg.prMap.get(r.pr_id as number);
-          if (
-            (state === "approved" || state === "changes_requested") &&
-            (!existingPr || new Date(r.submitted_at as string).getTime() <
-              new Date(existingPr.submitted_at).getTime())
-          ) {
-            agg.prMap.set(r.pr_id as number, {
-              pr_id: r.pr_id as number,
-              pr_number: r.pr_number as number,
-              title: (r.pr_title as string) || "",
-              html_url: (r.pr_html_url as string) || "",
-              latency_seconds: lat,
-              review_state: state,
-              submitted_at: r.submitted_at as string,
-              repo: repo,
-            });
-          }
+        if (
+          typeof lat === "number" &&
+          lat >= 0 &&
+          (state === "approved" || state === "changes_requested")
+        ) {
+          agg.reviewEvents.push({
+            review_id: r.review_id as number,
+            pr_id: r.pr_id as number,
+            pr_number: r.pr_number as number,
+            title: (r.pr_title as string) || "",
+            html_url: (r.pr_html_url as string) || "",
+            latency_seconds: lat,
+            review_state: state,
+            submitted_at: r.submitted_at as string,
+            repo: repo,
+          });
         }
       }
 
@@ -2426,14 +2423,13 @@ Deno.serve(async (req: Request) => {
             approved: 0,
             changesRequested: 0,
             commented: 0,
-            latencies: [],
-            prMap: new Map(),
+            reviewEvents: [],
           });
         }
       }
 
       const perRepo = Array.from(byRepo.values()).map((agg) => {
-        const allPrs = Array.from(agg.prMap.values()).sort(
+        const allPrs = agg.reviewEvents.slice().sort(
           (a, b) => b.latency_seconds - a.latency_seconds
         );
         const latencies = allPrs.map((p) => p.latency_seconds);

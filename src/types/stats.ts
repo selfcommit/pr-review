@@ -1,4 +1,5 @@
 export interface StatsPR {
+  review_id: number
   pr_id: number
   pr_number: number
   title: string

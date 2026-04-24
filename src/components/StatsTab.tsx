@@ -150,7 +150,7 @@ export function PrDrawer({
         <div className="repo-stats-pr-list">
           {sorted.map(pr => (
             <a
-              key={`excluded-${pr.pr_id}`}
+              key={`excluded-${pr.review_id}`}
               href={pr.html_url}
               target="_blank"
               rel="noopener noreferrer"
@@ -178,7 +178,7 @@ export function PrDrawer({
 
           {prs.map(pr => (
             <a
-              key={pr.pr_id}
+              key={pr.review_id}
               href={pr.html_url}
               target="_blank"
               rel="noopener noreferrer"
