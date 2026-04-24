@@ -68,16 +68,11 @@ export function StatRow({
   const onTargetCount = includedPrs.filter(p => p.latency_seconds <= ON_TARGET_SECONDS).length
   const hasIncluded = includedPrs.length > 0
 
-  const p90Sublabel = (
-    <>
-      <span>Target: within 24h</span>
-      {hasIncluded && (
-        <span className="stat-card-sublabel-accent">
-          {formatPercent(onTargetCount, includedPrs.length)} on target
-        </span>
-      )}
-    </>
-  )
+  const p90Sublabel = hasIncluded ? (
+    <span className="stat-card-sublabel-accent">
+      {formatPercent(onTargetCount, includedPrs.length)} of your reviews took less than 24 hours
+    </span>
+  ) : null
 
   return (
     <div className="stats-row">
