@@ -1,25 +1,6 @@
-import { useEffect, useState, useCallback } from 'react'
-import { apiGet } from '../utils/api'
 import { StatsResponse } from '../types/stats'
 import { StatRow, PrDrawer } from './StatsTab'
-
-const CACHE_KEY = 'stats_cache'
-
-function readCache(): StatsResponse | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY)
-    if (!raw) return null
-    return JSON.parse(raw)
-  } catch {
-    return null
-  }
-}
-
-function writeCache(data: StatsResponse) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(data))
-  } catch { /* quota exceeded is fine */ }
-}
+import { useStats } from '../hooks/useStats'
 
 const EMPTY_SUMMARY: StatsResponse = {
   summary: {
@@ -38,28 +19,11 @@ const EMPTY_SUMMARY: StatsResponse = {
 }
 
 function OverallStatsBar() {
-  const [data, setData] = useState<StatsResponse>(() => readCache() || EMPTY_SUMMARY)
-  const [refreshing, setRefreshing] = useState(false)
+  const { data, refreshing, refresh } = useStats()
+  const resolved = data ?? EMPTY_SUMMARY
 
-  const load = useCallback(async () => {
-    try {
-      setRefreshing(true)
-      const resp = await apiGet<StatsResponse>('stats')
-      setData(resp)
-      writeCache(resp)
-    } catch (err) {
-      if (err instanceof Error && err.message === 'Session expired') return
-    } finally {
-      setRefreshing(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    load()
-  }, [load])
-
-  const windowDays = data.window_days ?? 120
-  const summary = data.summary
+  const windowDays = resolved.window_days ?? 120
+  const summary = resolved.summary
   const prs = summary.prs || []
   const excludedPrs = summary.excluded_prs || []
 
@@ -69,7 +33,7 @@ function OverallStatsBar() {
         <h2 className="stats-section-title">All Repositories (last {windowDays} days)</h2>
         <button
           className="stats-refresh-btn"
-          onClick={load}
+          onClick={refresh}
           disabled={refreshing}
         >
           {refreshing ? 'Refreshing...' : 'Refresh Stats'}

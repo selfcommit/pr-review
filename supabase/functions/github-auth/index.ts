@@ -520,8 +520,12 @@ async function fetchBackfillDetailsBatch(
   if (items.length === 0) return result;
 
   const chunkSize = 15;
+  const chunks: BackfillPr[][] = [];
   for (let i = 0; i < items.length; i += chunkSize) {
-    const chunk = items.slice(i, i + chunkSize);
+    chunks.push(items.slice(i, i + chunkSize));
+  }
+
+  await Promise.all(chunks.map(async (chunk) => {
     const aliases = chunk.map((item, idx) => {
       const [owner, repo] = item.repoFullName.split("/");
       return `pr${idx}: repository(owner: "${owner}", name: "${repo}") {
@@ -569,10 +573,10 @@ async function fetchBackfillDetailsBatch(
       });
       if (!resp.ok) {
         console.error("[fetchBackfillDetailsBatch] failed", resp.status);
-        continue;
+        return;
       }
       const data = await resp.json();
-      if (!data?.data) continue;
+      if (!data?.data) return;
 
       chunk.forEach((item, idx) => {
         const pr = data.data[`pr${idx}`]?.pullRequest;
@@ -638,7 +642,7 @@ async function fetchBackfillDetailsBatch(
     } catch (err) {
       console.error("[fetchBackfillDetailsBatch] error", err);
     }
-  }
+  }));
 
   return result;
 }
@@ -716,38 +720,36 @@ async function backfillUserPrReviews(
       login
     );
 
+    const declineRows: Record<string, unknown>[] = [];
+    const reviewRequestRows: Record<string, unknown>[] = [];
+    const reviewRows: Record<string, unknown>[] = [];
+
     for (const pr of prsToFetch) {
       const detail = details[pr.id];
       if (!detail) continue;
 
       if (detail.decline) {
-        await supabase.from("pr_declines").upsert(
-          {
-            github_user_id: githubUserId,
-            pr_id: pr.id,
-            pr_number: pr.number,
-            repo_full_name: pr.repoFullName,
-            pr_title: pr.title,
-            pr_html_url: pr.html_url,
-            declined_at: detail.decline.declinedAt,
-            comment_id: detail.decline.commentId,
-          },
-          { onConflict: "github_user_id,pr_id", ignoreDuplicates: true }
-        );
+        declineRows.push({
+          github_user_id: githubUserId,
+          pr_id: pr.id,
+          pr_number: pr.number,
+          repo_full_name: pr.repoFullName,
+          pr_title: pr.title,
+          pr_html_url: pr.html_url,
+          declined_at: detail.decline.declinedAt,
+          comment_id: detail.decline.commentId,
+        });
       }
 
       if (detail.reviewRequestedAt) {
-        await supabase.from("review_requests").upsert(
-          {
-            github_user_id: githubUserId,
-            pr_id: pr.id,
-            pr_number: pr.number,
-            repo_full_name: pr.repoFullName,
-            review_requested_at: detail.reviewRequestedAt,
-            is_fallback_timestamp: false,
-          },
-          { onConflict: "github_user_id,pr_id" }
-        );
+        reviewRequestRows.push({
+          github_user_id: githubUserId,
+          pr_id: pr.id,
+          pr_number: pr.number,
+          repo_full_name: pr.repoFullName,
+          review_requested_at: detail.reviewRequestedAt,
+          is_fallback_timestamp: false,
+        });
       }
 
       const requestedMs = detail.reviewRequestedAt
@@ -766,23 +768,45 @@ async function backfillUserPrReviews(
           if (diff >= 0) latencySeconds = diff;
         }
 
-        await supabase.from("pr_reviews").upsert(
-          {
-            github_user_id: githubUserId,
-            pr_id: pr.id,
-            pr_number: pr.number,
-            repo_full_name: pr.repoFullName,
-            pr_title: pr.title,
-            pr_html_url: pr.html_url,
-            review_id: review.id,
-            review_state: review.state,
-            submitted_at: review.submittedAt,
-            latency_seconds: latencySeconds,
-          },
-          { onConflict: "github_user_id,review_id" }
-        );
+        reviewRows.push({
+          github_user_id: githubUserId,
+          pr_id: pr.id,
+          pr_number: pr.number,
+          repo_full_name: pr.repoFullName,
+          pr_title: pr.title,
+          pr_html_url: pr.html_url,
+          review_id: review.id,
+          review_state: review.state,
+          submitted_at: review.submittedAt,
+          latency_seconds: latencySeconds,
+        });
       }
     }
+
+    const batchUpserts: Promise<unknown>[] = [];
+    if (declineRows.length > 0) {
+      batchUpserts.push(
+        supabase.from("pr_declines").upsert(declineRows, {
+          onConflict: "github_user_id,pr_id",
+          ignoreDuplicates: true,
+        })
+      );
+    }
+    if (reviewRequestRows.length > 0) {
+      batchUpserts.push(
+        supabase.from("review_requests").upsert(reviewRequestRows, {
+          onConflict: "github_user_id,pr_id",
+        })
+      );
+    }
+    if (reviewRows.length > 0) {
+      batchUpserts.push(
+        supabase.from("pr_reviews").upsert(reviewRows, {
+          onConflict: "github_user_id,review_id",
+        })
+      );
+    }
+    await Promise.all(batchUpserts);
 
     await supabase
       .from("app_users")

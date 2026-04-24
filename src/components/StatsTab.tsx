@@ -1,6 +1,6 @@
-import { ReactNode, useEffect, useState } from 'react'
-import { apiGet } from '../utils/api'
-import { RepoStats, StatsPR, StatsResponse, StatsSummary, formatLatency } from '../types/stats'
+import { ReactNode, useState } from 'react'
+import { RepoStats, StatsPR, StatsSummary, formatLatency } from '../types/stats'
+import { useStats } from '../hooks/useStats'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
@@ -239,29 +239,9 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
 }
 
 function StatsTab() {
-  const [data, setData] = useState<StatsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data, refreshing, error, refresh } = useStats()
 
-  const load = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const resp = await apiGet<StatsResponse>('stats')
-      setData(resp)
-    } catch (err) {
-      if (err instanceof Error && err.message === 'Session expired') return
-      setError(err instanceof Error ? err.message : 'Failed to load stats')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
-
-  if (loading) {
+  if (!data && refreshing) {
     return (
       <div className="loading-state">
         <div className="spinner"></div>
@@ -270,11 +250,11 @@ function StatsTab() {
     )
   }
 
-  if (error) {
+  if (!data && error) {
     return (
       <div className="error-state">
         <p className="error-message">{error}</p>
-        <button onClick={load} className="retry-button">Try Again</button>
+        <button onClick={refresh} className="retry-button">Try Again</button>
       </div>
     )
   }
@@ -298,8 +278,8 @@ function StatsTab() {
       <div className="stats-section">
         <div className="stats-section-header">
           <h2 className="stats-section-title">Per Repository</h2>
-          <button className="stats-refresh-btn" onClick={load}>
-            Refresh Stats
+          <button className="stats-refresh-btn" onClick={refresh} disabled={refreshing}>
+            {refreshing ? 'Refreshing...' : 'Refresh Stats'}
           </button>
         </div>
         <div className="repo-stats-list">
