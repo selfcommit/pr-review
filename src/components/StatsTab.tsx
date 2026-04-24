@@ -1,16 +1,34 @@
-import { useEffect, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { apiGet } from '../utils/api'
 import { RepoStats, StatsResponse, StatsSummary, formatLatency } from '../types/stats'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
-function StatCard({ label, value, tone }: { label: string; value: string | number; tone?: StatTone }) {
+function StatCard({
+  label,
+  value,
+  tone,
+  sublabel,
+}: {
+  label: string
+  value: string | number
+  tone?: StatTone
+  sublabel?: ReactNode
+}) {
   return (
     <div className={`stat-card stat-card-${tone || 'slate'}`}>
       <div className="stat-card-label">{label}</div>
       <div className="stat-card-value">{value}</div>
+      {sublabel && <div className="stat-card-sublabel">{sublabel}</div>}
     </div>
   )
+}
+
+const ON_TARGET_SECONDS = 24 * 3600
+
+function formatPercent(num: number, denom: number): string {
+  if (denom <= 0) return '—'
+  return `${Math.round((num / denom) * 100)}%`
 }
 
 function p90Tone(latencySeconds: number | null | undefined): StatTone {
@@ -21,16 +39,50 @@ function p90Tone(latencySeconds: number | null | undefined): StatTone {
   return 'green'
 }
 
-function StatRow({ summary, sampleLabel }: { summary: StatsSummary; sampleLabel?: string }) {
+function StatRow({
+  summary,
+  sampleLabel,
+  includedPrs,
+}: {
+  summary: StatsSummary
+  sampleLabel?: string
+  includedPrs: { latency_seconds: number }[]
+}) {
+  const total = summary.total_reviews
+  const onTargetCount = includedPrs.filter(p => p.latency_seconds <= ON_TARGET_SECONDS).length
+  const hasIncluded = includedPrs.length > 0
+
+  const p90Sublabel = (
+    <>
+      <span>Target: within 24h</span>
+      {hasIncluded && (
+        <span className="stat-card-sublabel-accent">
+          {formatPercent(onTargetCount, includedPrs.length)} on target
+        </span>
+      )}
+    </>
+  )
+
   return (
     <div className="stats-row">
       <StatCard label="Total Reviews" value={summary.total_reviews} tone="blue" />
-      <StatCard label="Approved" value={summary.approved} tone="green" />
-      <StatCard label="Changes Requested" value={summary.changes_requested} tone="amber" />
+      <StatCard
+        label="Approved"
+        value={summary.approved}
+        tone="green"
+        sublabel={total > 0 ? `${formatPercent(summary.approved, total)} of total` : undefined}
+      />
+      <StatCard
+        label="Changes Requested"
+        value={summary.changes_requested}
+        tone="amber"
+        sublabel={total > 0 ? `${formatPercent(summary.changes_requested, total)} of total` : undefined}
+      />
       <StatCard
         label={sampleLabel ? `P90 Review Time (${sampleLabel})` : 'P90 Review Time'}
         value={formatLatency(summary.p90_latency_seconds)}
         tone={p90Tone(summary.p90_latency_seconds)}
+        sublabel={p90Sublabel}
       />
     </div>
   )
@@ -67,6 +119,7 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           p90_latency_seconds: repo.p90_latency_seconds,
           latency_sample_size: repo.latency_sample_size,
         }}
+        includedPrs={repo.prs}
       />
 
       {hasLatency && totalPrs > 0 && (
@@ -194,6 +247,7 @@ function StatsTab() {
         <StatRow
           summary={data.summary}
           sampleLabel={`${data.summary.latency_sample_size} samples`}
+          includedPrs={data.repos.flatMap(r => r.prs)}
         />
       </div>
 
