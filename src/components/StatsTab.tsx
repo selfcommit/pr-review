@@ -65,7 +65,6 @@ function StatRow({
 
   return (
     <div className="stats-row">
-      <StatCard label="Total Reviews" value={summary.total_reviews} tone="blue" />
       <StatCard
         label="Approved"
         value={summary.approved}
