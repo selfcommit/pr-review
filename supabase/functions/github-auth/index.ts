@@ -2677,6 +2677,12 @@ Deno.serve(async (req: Request) => {
         .eq("session_token", sessionToken)
         .maybeSingle();
       if (!user) return jsonResponse({ error: "Invalid session" }, 401);
+
+      await supabase
+        .from("app_users")
+        .update({ last_seen_at: new Date().toISOString() })
+        .eq("github_user_id", user.github_user_id);
+
       return jsonResponse({
         id: user.github_user_id,
         login: user.login,
@@ -2705,7 +2711,7 @@ Deno.serve(async (req: Request) => {
       const { data: users } = await supabase
         .from("app_users")
         .select(
-          "github_user_id, login, name, avatar_url, email, is_admin, created_at, updated_at, teams_last_synced_at, stats_backfilled_at"
+          "github_user_id, login, name, avatar_url, email, is_admin, created_at, updated_at, last_seen_at, teams_last_synced_at, stats_backfilled_at"
         )
         .order("created_at", { ascending: false });
 
@@ -2752,14 +2758,20 @@ Deno.serve(async (req: Request) => {
           if (a) a.teams += 1;
         }
 
-        const { data: openReqRows } = await supabase
+        const { data: reqRows } = await supabase
           .from("review_requests")
-          .select("github_user_id")
-          .in("github_user_id", userIds)
-          .is("reviewed_at", null);
-        for (const row of openReqRows || []) {
+          .select("github_user_id, review_requested_at, reviewed_at")
+          .in("github_user_id", userIds);
+        for (const row of reqRows || []) {
           const a = aggregates.get(row.github_user_id as number);
-          if (a) a.openRequests += 1;
+          if (!a) continue;
+          if (!row.reviewed_at) a.openRequests += 1;
+          const candidate =
+            (row.reviewed_at as string | null) ||
+            (row.review_requested_at as string | null);
+          if (candidate && (!a.lastActivityAt || candidate > a.lastActivityAt)) {
+            a.lastActivityAt = candidate;
+          }
         }
 
         const { data: reviewRows } = await supabase
@@ -2790,6 +2802,7 @@ Deno.serve(async (req: Request) => {
           is_admin: boolean;
           created_at: string;
           updated_at: string;
+          last_seen_at: string | null;
           teams_last_synced_at: string | null;
           stats_backfilled_at: string | null;
         }) => {
@@ -2800,6 +2813,13 @@ Deno.serve(async (req: Request) => {
             totalReviews: 0,
             lastActivityAt: null,
           };
+          let lastActivityAt = agg.lastActivityAt;
+          if (
+            u.last_seen_at &&
+            (!lastActivityAt || u.last_seen_at > lastActivityAt)
+          ) {
+            lastActivityAt = u.last_seen_at;
+          }
           return {
             github_user_id: u.github_user_id,
             login: u.login,
@@ -2815,7 +2835,7 @@ Deno.serve(async (req: Request) => {
             team_count: agg.teams,
             open_review_requests: agg.openRequests,
             total_reviews: agg.totalReviews,
-            last_activity_at: agg.lastActivityAt,
+            last_activity_at: lastActivityAt,
           };
         }
       );
