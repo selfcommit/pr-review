@@ -1424,7 +1424,8 @@ Deno.serve(async (req: Request) => {
 
   try {
     const url = new URL(req.url);
-    const path = url.pathname.split("/").pop();
+    const match = url.pathname.match(/\/github-auth\/(.+)$/);
+    const path = match ? match[1].replace(/\/+$/, "") : url.pathname.split("/").pop();
 
     if (path === "login") {
       const clientId = Deno.env.get("GITHUB_CLIENT_ID");
