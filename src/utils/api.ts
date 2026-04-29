@@ -17,7 +17,15 @@ function clearSession(): void {
   localStorage.removeItem(USER_CACHE_KEY);
 }
 
-export function getCachedUser(): { id: number; login: string; name: string; avatar_url: string } | null {
+export interface CachedUser {
+  id: number;
+  login: string;
+  name: string;
+  avatar_url: string;
+  is_admin?: boolean;
+}
+
+export function getCachedUser(): CachedUser | null {
   const raw = localStorage.getItem(USER_CACHE_KEY);
   if (!raw) return null;
   try {
@@ -27,7 +35,7 @@ export function getCachedUser(): { id: number; login: string; name: string; avat
   }
 }
 
-export function setCachedUser(user: { id: number; login: string; name: string; avatar_url: string }): void {
+export function setCachedUser(user: CachedUser): void {
   localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user));
 }
 

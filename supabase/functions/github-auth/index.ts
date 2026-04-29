@@ -1593,11 +1593,18 @@ Deno.serve(async (req: Request) => {
         null
       );
 
+      const { data: adminRow } = await supabaseForCallback
+        .from("app_users")
+        .select("is_admin")
+        .eq("github_user_id", userData.id)
+        .maybeSingle();
+
       const user = {
         id: userData.id,
         login: userData.login,
         name: userData.name,
         avatar_url: userData.avatar_url,
+        is_admin: !!adminRow?.is_admin,
       };
 
       const params = new URLSearchParams({
@@ -2654,6 +2661,205 @@ Deno.serve(async (req: Request) => {
       }
 
       return jsonResponse({ error: "Method not allowed" }, 405);
+    }
+
+    if (path === "me") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id, login, name, avatar_url, is_admin")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+      if (!user) return jsonResponse({ error: "Invalid session" }, 401);
+      return jsonResponse({
+        id: user.github_user_id,
+        login: user.login,
+        name: user.name,
+        avatar_url: user.avatar_url,
+        is_admin: !!user.is_admin,
+      });
+    }
+
+    if (path === "admin/users") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+      const { data: caller } = await supabase
+        .from("app_users")
+        .select("github_user_id, is_admin")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+      if (!caller) return jsonResponse({ error: "Invalid session" }, 401);
+      if (!caller.is_admin)
+        return jsonResponse({ error: "Admin access required" }, 403);
+
+      const { data: users } = await supabase
+        .from("app_users")
+        .select(
+          "github_user_id, login, name, avatar_url, email, is_admin, created_at, updated_at, teams_last_synced_at, stats_backfilled_at"
+        )
+        .order("created_at", { ascending: false });
+
+      const userIds = (users || []).map(
+        (u: { github_user_id: number }) => u.github_user_id
+      );
+
+      const aggregates = new Map<
+        number,
+        {
+          orgs: number;
+          teams: number;
+          openRequests: number;
+          totalReviews: number;
+          lastActivityAt: string | null;
+        }
+      >();
+      for (const id of userIds) {
+        aggregates.set(id, {
+          orgs: 0,
+          teams: 0,
+          openRequests: 0,
+          totalReviews: 0,
+          lastActivityAt: null,
+        });
+      }
+
+      if (userIds.length > 0) {
+        const { data: orgRows } = await supabase
+          .from("user_orgs")
+          .select("github_user_id")
+          .in("github_user_id", userIds);
+        for (const row of orgRows || []) {
+          const a = aggregates.get(row.github_user_id as number);
+          if (a) a.orgs += 1;
+        }
+
+        const { data: teamRows } = await supabase
+          .from("user_teams")
+          .select("github_user_id")
+          .in("github_user_id", userIds);
+        for (const row of teamRows || []) {
+          const a = aggregates.get(row.github_user_id as number);
+          if (a) a.teams += 1;
+        }
+
+        const { data: openReqRows } = await supabase
+          .from("review_requests")
+          .select("github_user_id")
+          .in("github_user_id", userIds)
+          .is("reviewed_at", null);
+        for (const row of openReqRows || []) {
+          const a = aggregates.get(row.github_user_id as number);
+          if (a) a.openRequests += 1;
+        }
+
+        const { data: reviewRows } = await supabase
+          .from("pr_reviews")
+          .select("github_user_id, submitted_at")
+          .in("github_user_id", userIds);
+        for (const row of reviewRows || []) {
+          const a = aggregates.get(row.github_user_id as number);
+          if (!a) continue;
+          a.totalReviews += 1;
+          const submitted = row.submitted_at as string | null;
+          if (
+            submitted &&
+            (!a.lastActivityAt || submitted > a.lastActivityAt)
+          ) {
+            a.lastActivityAt = submitted;
+          }
+        }
+      }
+
+      const enriched = (users || []).map(
+        (u: {
+          github_user_id: number;
+          login: string;
+          name: string | null;
+          avatar_url: string | null;
+          email: string | null;
+          is_admin: boolean;
+          created_at: string;
+          updated_at: string;
+          teams_last_synced_at: string | null;
+          stats_backfilled_at: string | null;
+        }) => {
+          const agg = aggregates.get(u.github_user_id) || {
+            orgs: 0,
+            teams: 0,
+            openRequests: 0,
+            totalReviews: 0,
+            lastActivityAt: null,
+          };
+          return {
+            github_user_id: u.github_user_id,
+            login: u.login,
+            name: u.name,
+            avatar_url: u.avatar_url,
+            email: u.email,
+            is_admin: u.is_admin,
+            created_at: u.created_at,
+            updated_at: u.updated_at,
+            teams_last_synced_at: u.teams_last_synced_at,
+            stats_backfilled_at: u.stats_backfilled_at,
+            org_count: agg.orgs,
+            team_count: agg.teams,
+            open_review_requests: agg.openRequests,
+            total_reviews: agg.totalReviews,
+            last_activity_at: agg.lastActivityAt,
+          };
+        }
+      );
+
+      return jsonResponse({ users: enriched, total: enriched.length });
+    }
+
+    if (path === "admin/toggle-admin") {
+      if (req.method !== "POST") {
+        return jsonResponse({ error: "Method not allowed" }, 405);
+      }
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+      const { data: caller } = await supabase
+        .from("app_users")
+        .select("github_user_id, is_admin")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+      if (!caller) return jsonResponse({ error: "Invalid session" }, 401);
+      if (!caller.is_admin)
+        return jsonResponse({ error: "Admin access required" }, 403);
+
+      const body = await req.json().catch(() => ({}));
+      const targetId = Number(body.github_user_id);
+      const makeAdmin = !!body.is_admin;
+      if (!targetId) {
+        return jsonResponse({ error: "github_user_id required" }, 400);
+      }
+      if (targetId === caller.github_user_id && !makeAdmin) {
+        return jsonResponse(
+          { error: "You cannot remove your own admin access" },
+          400
+        );
+      }
+
+      const { error } = await supabase
+        .from("app_users")
+        .update({ is_admin: makeAdmin, updated_at: new Date().toISOString() })
+        .eq("github_user_id", targetId);
+      if (error) return jsonResponse({ error: error.message }, 500);
+      return jsonResponse({ success: true });
     }
 
     if (path === "logout") {

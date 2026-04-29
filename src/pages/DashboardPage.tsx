@@ -21,9 +21,11 @@ import NotificationPermissionBanner from '../components/NotificationPermissionBa
 import './DashboardPage.css'
 
 interface GitHubUser {
+  id?: number
   login: string
   name: string
   avatar_url: string
+  is_admin?: boolean
 }
 
 interface QueryDebugInfo {
@@ -227,6 +229,18 @@ function DashboardPage() {
     }
     loadPullRequests()
     fetchOrgs()
+    apiGet<GitHubUser>('me')
+      .then(me => {
+        setUser(me)
+        setCachedUser({
+          id: me.id ?? 0,
+          login: me.login,
+          name: me.name,
+          avatar_url: me.avatar_url,
+          is_admin: me.is_admin,
+        })
+      })
+      .catch(() => {})
   }, [fetchOrgs])
 
   useEffect(() => {
@@ -449,6 +463,15 @@ function DashboardPage() {
                 <img src={user.avatar_url} alt={user.login} className="user-avatar" />
                 <span className="user-name">{user.name || user.login}</span>
               </div>
+            )}
+            {user?.is_admin && (
+              <button
+                onClick={() => navigate('/admin/users')}
+                className="signout-button"
+                title="Admin"
+              >
+                Admin
+              </button>
             )}
             <button onClick={handleSignOut} className="signout-button">
               Sign Out

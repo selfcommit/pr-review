@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import LandingPage from './pages/LandingPage'
 import DashboardPage from './pages/DashboardPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
+import AdminUsersPage from './pages/AdminUsersPage'
 import { getSessionToken, setSessionToken, setCachedUser } from './utils/api'
 
 const ERROR_CODE_MESSAGES: Record<string, string> = {
@@ -152,6 +153,10 @@ function App() {
         <Route
           path="/dashboard"
           element={isAuthenticated ? <DashboardPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="/admin/users"
+          element={isAuthenticated ? <AdminUsersPage /> : <Navigate to="/" replace />}
         />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
       </Routes>
