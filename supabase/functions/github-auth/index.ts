@@ -647,14 +647,55 @@ async function fetchBackfillDetailsBatch(
   return result;
 }
 
+async function applyDeclineRows(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  declineRows: Array<{
+    pr_id: number;
+    pr_number: number;
+    repo_full_name: string;
+    pr_title: string;
+    pr_html_url: string;
+    declined_at: string;
+    comment_id: number;
+  }>
+): Promise<void> {
+  if (declineRows.length === 0) return;
+  const prIds = declineRows.map((r) => r.pr_id);
+
+  await supabase.from("pr_declines").upsert(
+    declineRows.map((r) => ({ github_user_id: githubUserId, ...r })),
+    { onConflict: "github_user_id,pr_id", ignoreDuplicates: true }
+  );
+
+  await Promise.all([
+    supabase
+      .from("pr_reviews")
+      .delete()
+      .eq("github_user_id", githubUserId)
+      .in("pr_id", prIds),
+    supabase
+      .from("review_requests")
+      .delete()
+      .eq("github_user_id", githubUserId)
+      .in("pr_id", prIds),
+    supabase
+      .from("user_pr_snapshots")
+      .delete()
+      .eq("github_user_id", githubUserId)
+      .in("pr_id", prIds),
+  ]);
+}
+
 async function backfillUserPrReviews(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   githubUserId: number,
   accessToken: string,
   login: string,
-  lastBackfilledAt: string | null
+  lastBackfilledAt: string | null,
+  force = false
 ): Promise<boolean> {
-  if (lastBackfilledAt) {
+  if (!force && lastBackfilledAt) {
     const ageMs = Date.now() - new Date(lastBackfilledAt).getTime();
     if (ageMs < STATS_BACKFILL_TTL_MS) return false;
   }
@@ -706,6 +747,58 @@ async function backfillUserPrReviews(
     );
 
     const prsToFetch = candidates.filter((c) => !prsWithReviews.has(c.id));
+    const prsForDeclineOnly = candidates.filter((c) => prsWithReviews.has(c.id));
+
+    if (prsForDeclineOnly.length > 0) {
+      const existingDeclinesForCandidates = await supabase
+        .from("pr_declines")
+        .select("pr_id")
+        .eq("github_user_id", githubUserId)
+        .in("pr_id", prsForDeclineOnly.map((p) => p.id));
+      const alreadyDeclined = new Set<number>(
+        (existingDeclinesForCandidates.data || []).map(
+          (r: { pr_id: number }) => r.pr_id
+        )
+      );
+      const needComments = prsForDeclineOnly.filter(
+        (p) => !alreadyDeclined.has(p.id)
+      );
+      if (needComments.length > 0) {
+        const declines = await fetchDeclineCommentsBatch(
+          accessToken,
+          needComments.map((p) => ({
+            id: p.id,
+            number: p.number,
+            repoFullName: p.repoFullName,
+          })),
+          login
+        );
+        const declineRowsAlreadyReviewed: Array<{
+          pr_id: number;
+          pr_number: number;
+          repo_full_name: string;
+          pr_title: string;
+          pr_html_url: string;
+          declined_at: string;
+          comment_id: number;
+        }> = [];
+        for (const pr of needComments) {
+          const decline = declines[pr.id];
+          if (!decline) continue;
+          declineRowsAlreadyReviewed.push({
+            pr_id: pr.id,
+            pr_number: pr.number,
+            repo_full_name: pr.repoFullName,
+            pr_title: pr.title,
+            pr_html_url: pr.html_url,
+            declined_at: decline.declinedAt,
+            comment_id: decline.commentId,
+          });
+        }
+        await applyDeclineRows(supabase, githubUserId, declineRowsAlreadyReviewed);
+      }
+    }
+
     if (prsToFetch.length === 0) {
       await supabase
         .from("app_users")
@@ -720,7 +813,15 @@ async function backfillUserPrReviews(
       login
     );
 
-    const declineRows: Record<string, unknown>[] = [];
+    const declineRows: Array<{
+      pr_id: number;
+      pr_number: number;
+      repo_full_name: string;
+      pr_title: string;
+      pr_html_url: string;
+      declined_at: string;
+      comment_id: number;
+    }> = [];
     const reviewRequestRows: Record<string, unknown>[] = [];
     const reviewRows: Record<string, unknown>[] = [];
 
@@ -730,7 +831,6 @@ async function backfillUserPrReviews(
 
       if (detail.decline) {
         declineRows.push({
-          github_user_id: githubUserId,
           pr_id: pr.id,
           pr_number: pr.number,
           repo_full_name: pr.repoFullName,
@@ -783,30 +883,31 @@ async function backfillUserPrReviews(
       }
     }
 
+    const declinedInThisBatch = new Set(declineRows.map((r) => r.pr_id));
+    const filteredReviewRequestRows = reviewRequestRows.filter(
+      (r) => !declinedInThisBatch.has(r.pr_id as number)
+    );
+    const filteredReviewRows = reviewRows.filter(
+      (r) => !declinedInThisBatch.has(r.pr_id as number)
+    );
+
     const batchUpserts: Promise<unknown>[] = [];
-    if (declineRows.length > 0) {
+    if (filteredReviewRequestRows.length > 0) {
       batchUpserts.push(
-        supabase.from("pr_declines").upsert(declineRows, {
-          onConflict: "github_user_id,pr_id",
-          ignoreDuplicates: true,
-        })
-      );
-    }
-    if (reviewRequestRows.length > 0) {
-      batchUpserts.push(
-        supabase.from("review_requests").upsert(reviewRequestRows, {
+        supabase.from("review_requests").upsert(filteredReviewRequestRows, {
           onConflict: "github_user_id,pr_id",
         })
       );
     }
-    if (reviewRows.length > 0) {
+    if (filteredReviewRows.length > 0) {
       batchUpserts.push(
-        supabase.from("pr_reviews").upsert(reviewRows, {
+        supabase.from("pr_reviews").upsert(filteredReviewRows, {
           onConflict: "github_user_id,review_id",
         })
       );
     }
     await Promise.all(batchUpserts);
+    await applyDeclineRows(supabase, githubUserId, declineRows);
 
     await supabase
       .from("app_users")
@@ -817,6 +918,90 @@ async function backfillUserPrReviews(
   } catch (err) {
     console.error("[backfillUserPrReviews] failed", err);
     return false;
+  }
+}
+
+async function deepBackfillDeclines(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number,
+  accessToken: string,
+  login: string
+): Promise<void> {
+  const windowStart = new Date(
+    Date.now() - STATS_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  );
+  const dateStr = windowStart.toISOString().slice(0, 10);
+
+  try {
+    const [reviewedPrs, requestedPrs, commentedPrs] = await Promise.all([
+      searchPrsForBackfill(
+        accessToken,
+        `is:pr reviewed-by:@me updated:>=${dateStr}`
+      ),
+      searchPrsForBackfill(
+        accessToken,
+        `is:pr review-requested:@me updated:>=${dateStr}`
+      ),
+      searchPrsForBackfill(
+        accessToken,
+        `is:pr commenter:@me updated:>=${dateStr}`
+      ),
+    ]);
+
+    const byId = new Map<number, BackfillPr>();
+    for (const p of [...reviewedPrs, ...requestedPrs, ...commentedPrs]) {
+      if (!byId.has(p.id)) byId.set(p.id, p);
+    }
+    const candidates = Array.from(byId.values()).slice(0, 1000);
+    if (candidates.length === 0) return;
+
+    const { data: existingDeclines } = await supabase
+      .from("pr_declines")
+      .select("pr_id")
+      .eq("github_user_id", githubUserId)
+      .in("pr_id", candidates.map((c) => c.id));
+    const alreadyDeclined = new Set<number>(
+      (existingDeclines || []).map((r: { pr_id: number }) => r.pr_id)
+    );
+
+    const needComments = candidates.filter((p) => !alreadyDeclined.has(p.id));
+    if (needComments.length === 0) return;
+
+    const declines = await fetchDeclineCommentsBatch(
+      accessToken,
+      needComments.map((p) => ({
+        id: p.id,
+        number: p.number,
+        repoFullName: p.repoFullName,
+      })),
+      login
+    );
+
+    const rows: Array<{
+      pr_id: number;
+      pr_number: number;
+      repo_full_name: string;
+      pr_title: string;
+      pr_html_url: string;
+      declined_at: string;
+      comment_id: number;
+    }> = [];
+    for (const pr of needComments) {
+      const decline = declines[pr.id];
+      if (!decline) continue;
+      rows.push({
+        pr_id: pr.id,
+        pr_number: pr.number,
+        repo_full_name: pr.repoFullName,
+        pr_title: pr.title,
+        pr_html_url: pr.html_url,
+        declined_at: decline.declinedAt,
+        comment_id: decline.commentId,
+      });
+    }
+    await applyDeclineRows(supabase, githubUserId, rows);
+  } catch (err) {
+    console.error("[deepBackfillDeclines] failed", err);
   }
 }
 
@@ -2292,10 +2477,14 @@ Deno.serve(async (req: Request) => {
 
       const sessionToken = authHeader.replace("Bearer ", "");
       const supabase = getSupabaseAdmin();
+      const statsUrl = new URL(req.url);
+      const force = statsUrl.searchParams.get("force") === "true";
 
       const { data: user } = await supabase
         .from("app_users")
-        .select("github_user_id, access_token, login, stats_backfilled_at")
+        .select(
+          "github_user_id, access_token, login, stats_backfilled_at, declines_backfilled_at"
+        )
         .eq("session_token", sessionToken)
         .maybeSingle();
 
@@ -2308,8 +2497,22 @@ Deno.serve(async (req: Request) => {
         user.github_user_id,
         user.access_token,
         user.login,
-        user.stats_backfilled_at
+        user.stats_backfilled_at,
+        force
       );
+
+      if (force && !user.declines_backfilled_at) {
+        await deepBackfillDeclines(
+          supabase,
+          user.github_user_id,
+          user.access_token,
+          user.login
+        );
+        await supabase
+          .from("app_users")
+          .update({ declines_backfilled_at: new Date().toISOString() })
+          .eq("github_user_id", user.github_user_id);
+      }
 
       const { data: freshUser } = await supabase
         .from("app_users")

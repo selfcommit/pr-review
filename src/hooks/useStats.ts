@@ -32,9 +32,10 @@ function broadcast() {
   for (const l of listeners) l(current)
 }
 
-async function fetchStats(): Promise<StatsResponse> {
+async function fetchStats(force = false): Promise<StatsResponse> {
   if (inFlight) return inFlight
-  inFlight = apiGet<StatsResponse>('stats')
+  const path = force ? 'stats?force=true' : 'stats'
+  inFlight = apiGet<StatsResponse>(path)
     .then(resp => {
       current = resp
       writeCache(resp)
@@ -56,11 +57,11 @@ export function useStats() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
+  const load = useCallback(async (force: boolean) => {
     try {
       setRefreshing(true)
       setError(null)
-      await fetchStats()
+      await fetchStats(force)
     } catch (err) {
       if (err instanceof Error && err.message === 'Session expired') return
       setError(err instanceof Error ? err.message : 'Failed to load stats')
@@ -68,6 +69,8 @@ export function useStats() {
       setRefreshing(false)
     }
   }, [])
+
+  const refresh = useCallback(() => load(true), [load])
 
   useEffect(() => {
     const listener: Listener = next => setData(next)
@@ -78,8 +81,8 @@ export function useStats() {
   }, [])
 
   useEffect(() => {
-    refresh()
-  }, [refresh])
+    load(false)
+  }, [load])
 
   return { data, refreshing, error, refresh }
 }
