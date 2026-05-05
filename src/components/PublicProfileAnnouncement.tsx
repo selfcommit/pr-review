@@ -4,7 +4,7 @@ import { useProfileVisibility } from '../hooks/useProfileVisibility'
 const STORAGE_KEY = 'public_profile_announced_v1'
 
 export function PublicProfileAnnouncement() {
-  const { settings, setHidden } = useProfileVisibility()
+  const { settings } = useProfileVisibility()
   const [dismissed, setDismissed] = useState(true)
 
   useEffect(() => {
@@ -18,11 +18,6 @@ export function PublicProfileAnnouncement() {
   const markAcknowledged = () => {
     localStorage.setItem(STORAGE_KEY, '1')
     setDismissed(true)
-  }
-
-  const hideAndAck = async () => {
-    await setHidden(true)
-    markAcknowledged()
   }
 
   return (
@@ -54,13 +49,6 @@ export function PublicProfileAnnouncement() {
         >
           View my profile
         </a>
-        <button
-          type="button"
-          onClick={hideAndAck}
-          className="public-profile-announcement-btn"
-        >
-          Hide it
-        </button>
         <button
           type="button"
           onClick={markAcknowledged}
