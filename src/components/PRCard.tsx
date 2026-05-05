@@ -7,6 +7,7 @@ interface PRCardProps {
   showWaitTime?: boolean
   showAge?: boolean
   highlighted?: boolean
+  onDeclineClick?: (pr: PullRequest) => void
 }
 
 function getPrStateBadge(pr: PullRequest) {
@@ -15,7 +16,7 @@ function getPrStateBadge(pr: PullRequest) {
   return { label: 'Open', className: 'state-badge state-open' }
 }
 
-function PRCard({ pr, showState, showWaitTime, showAge, highlighted }: PRCardProps) {
+function PRCard({ pr, showState, showWaitTime, showAge, highlighted, onDeclineClick }: PRCardProps) {
   const urgency = pr.review_requested_at ? getUrgencyLevel(pr.review_requested_at) : null
 
   return (
@@ -59,6 +60,21 @@ function PRCard({ pr, showState, showWaitTime, showAge, highlighted }: PRCardPro
               </svg>
               {formatWaitTime(pr.created_at)} open
             </span>
+          )}
+          {onDeclineClick && (
+            <button
+              type="button"
+              className="pr-decline-btn"
+              title="Can't review this PR"
+              aria-label="Can't review this PR"
+              onClick={e => {
+                e.preventDefault()
+                e.stopPropagation()
+                onDeclineClick(pr)
+              }}
+            >
+              <span aria-hidden="true">&#x1F3C3;</span>
+            </button>
           )}
         </div>
       </div>

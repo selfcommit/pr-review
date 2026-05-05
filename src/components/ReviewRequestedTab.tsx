@@ -4,6 +4,7 @@ import { mapItem } from '../types/pullRequest'
 import { isOverdue } from '../utils/time'
 import { primeAudio } from '../utils/notificationSound'
 import PRCard from './PRCard'
+import DeclineReviewModal from './DeclineReviewModal'
 
 interface UrgencyGroup {
   label: string
@@ -67,6 +68,8 @@ function ReviewRequestedTab({
 }: ReviewRequestedTabProps) {
   const [showDrafts, setShowDrafts] = useState(false)
   const [showTeamApproved, setShowTeamApproved] = useState(readTeamApprovedFilter)
+  const [decliningPr, setDecliningPr] = useState<PullRequest | null>(null)
+  const [locallyDeclinedIds, setLocallyDeclinedIds] = useState<Set<number>>(new Set())
 
   const toggleTeamApproved = () => {
     setShowTeamApproved(prev => {
@@ -79,12 +82,14 @@ function ReviewRequestedTab({
     })
   }
 
-  const allReviewPRs = reviewRequestedItems.map(item => {
-    const pr = mapItem(item)
-    const ts = reviewTimestamps[pr.id]
-    if (ts) pr.review_requested_at = ts
-    return pr
-  })
+  const allReviewPRs = reviewRequestedItems
+    .map(item => {
+      const pr = mapItem(item)
+      const ts = reviewTimestamps[pr.id]
+      if (ts) pr.review_requested_at = ts
+      return pr
+    })
+    .filter(pr => !locallyDeclinedIds.has(pr.id))
 
   const draftCount = allReviewPRs.filter(pr => pr.draft).length
   const afterDraftFilter = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
@@ -194,6 +199,7 @@ function ReviewRequestedTab({
                     showState={false}
                     showWaitTime
                     highlighted={highlightedPRIds.has(pr.id)}
+                    onDeclineClick={setDecliningPr}
                   />
                 ))}
               </div>
@@ -202,6 +208,20 @@ function ReviewRequestedTab({
         </div>
       )}
 
+      {decliningPr && (
+        <DeclineReviewModal
+          pr={decliningPr}
+          onClose={() => setDecliningPr(null)}
+          onSuccess={prId => {
+            setLocallyDeclinedIds(prev => {
+              const next = new Set(prev)
+              next.add(prId)
+              return next
+            })
+            setDecliningPr(null)
+          }}
+        />
+      )}
     </>
   )
 }

@@ -3226,6 +3226,102 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ success: true });
     }
 
+    if (path === "decline-review") {
+      if (req.method !== "POST") {
+        return jsonResponse({ error: "Method not allowed" }, 405);
+      }
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+      const { data: declineUser } = await supabase
+        .from("app_users")
+        .select("github_user_id, access_token, login")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+      if (!declineUser) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      let body: {
+        repo_full_name?: string;
+        pr_number?: number;
+        pr_id?: number;
+        pr_title?: string;
+        pr_html_url?: string;
+        reason?: string;
+      } = {};
+      try {
+        body = await req.json();
+      } catch {
+        return jsonResponse({ error: "Invalid JSON body" }, 400);
+      }
+
+      const repo = (body.repo_full_name || "").trim();
+      const prNumber = Number(body.pr_number);
+      const prId = Number(body.pr_id);
+      const reasonRaw = (body.reason || "").trim();
+
+      if (!repo.includes("/") || !Number.isFinite(prNumber) || prNumber <= 0) {
+        return jsonResponse({ error: "repo_full_name and pr_number are required" }, 422);
+      }
+      if (!reasonRaw) {
+        return jsonResponse({ error: "Please provide a reason" }, 422);
+      }
+      if (reasonRaw.length > 1000) {
+        return jsonResponse({ error: "Reason must be 1000 characters or fewer" }, 422);
+      }
+
+      const [owner, repoName] = repo.split("/");
+      const commentBody = `:runner: ${reasonRaw}`;
+      const ghResp = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/issues/${prNumber}/comments`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${declineUser.access_token}`,
+            Accept: "application/vnd.github.v3+json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ body: commentBody }),
+        }
+      );
+      if (!ghResp.ok) {
+        const errText = await ghResp.text().catch(() => "");
+        console.error("[decline-review] GitHub post failed", ghResp.status, errText);
+        return jsonResponse(
+          { error: `GitHub rejected comment (${ghResp.status})` },
+          ghResp.status === 403 || ghResp.status === 404 ? ghResp.status : 502
+        );
+      }
+      const ghComment = (await ghResp.json()) as { id?: number; html_url?: string };
+      const commentId = typeof ghComment.id === "number" ? ghComment.id : 0;
+
+      if (Number.isFinite(prId) && prId > 0) {
+        await supabase.from("pr_declines").upsert(
+          {
+            github_user_id: declineUser.github_user_id,
+            pr_id: prId,
+            pr_number: prNumber,
+            repo_full_name: repo,
+            pr_title: (body.pr_title || "").slice(0, 500),
+            pr_html_url: (body.pr_html_url || "").slice(0, 500),
+            declined_at: new Date().toISOString(),
+            comment_id: commentId,
+          },
+          { onConflict: "github_user_id,pr_id" }
+        );
+      }
+
+      return jsonResponse({
+        success: true,
+        comment_id: commentId,
+        comment_url: ghComment.html_url || null,
+      });
+    }
+
     if (path === "logout") {
       if (req.method !== "POST") {
         return jsonResponse({ error: "Method not allowed" }, 405);
