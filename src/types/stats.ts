@@ -19,8 +19,8 @@ export interface RepoStats {
   declined: number
   p90_latency_seconds: number | null
   latency_sample_size: number
-  prs: StatsPR[]
-  excluded_prs: StatsPR[]
+  prs?: StatsPR[]
+  excluded_prs?: StatsPR[]
 }
 
 export interface StatsSummary {

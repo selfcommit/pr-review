@@ -2767,6 +2767,29 @@ Deno.serve(async (req: Request) => {
 
       const stats = await assembleStats(supabase, profile.github_user_id);
 
+      type PrLike = { latency_seconds: number | null };
+      const anonymizeLatencies = (arr: unknown) =>
+        Array.isArray(arr)
+          ? (arr as PrLike[]).map((p) => ({ latency_seconds: p?.latency_seconds ?? null }))
+          : [];
+
+      const summary = stats.summary ?? {};
+      const publicSummary = {
+        ...summary,
+        prs: anonymizeLatencies((summary as Record<string, unknown>).prs),
+        excluded_prs: [],
+      };
+      const publicRepos = (stats.repos ?? []).map((repo: Record<string, unknown>) => ({
+        ...repo,
+        prs: anonymizeLatencies(repo.prs),
+        excluded_prs: [],
+      }));
+      const publicStats = {
+        ...stats,
+        summary: publicSummary,
+        repos: publicRepos,
+      };
+
       return new Response(
         JSON.stringify({
           enabled: true,
@@ -2774,7 +2797,7 @@ Deno.serve(async (req: Request) => {
           name: profile.name,
           avatar_url: profile.avatar_url,
           backfilled_at: profile.stats_backfilled_at ?? null,
-          ...stats,
+          ...publicStats,
         }),
         {
           status: 200,

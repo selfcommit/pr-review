@@ -257,11 +257,11 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           p90_latency_seconds: repo.p90_latency_seconds,
           latency_sample_size: repo.latency_sample_size,
         }}
-        includedPrs={repo.prs}
+        includedPrs={repo.prs || []}
       />
 
       <PrDrawer
-        prs={repo.prs}
+        prs={repo.prs || []}
         excludedPrs={repo.excluded_prs || []}
         p90LatencySeconds={repo.p90_latency_seconds}
       />

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { StatRow, PrDrawer } from '../components/StatsTab'
+import { StatRow } from '../components/StatsTab'
 import { StatsResponse, RepoStats } from '../types/stats'
 import { apiGetPublic } from '../utils/api'
 import './DashboardPage.css'
@@ -60,13 +60,7 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           p90_latency_seconds: repo.p90_latency_seconds,
           latency_sample_size: repo.latency_sample_size,
         }}
-        includedPrs={repo.prs}
-      />
-
-      <PrDrawer
-        prs={repo.prs}
-        excludedPrs={repo.excluded_prs || []}
-        p90LatencySeconds={repo.p90_latency_seconds}
+        includedPrs={repo.prs || []}
       />
     </div>
   )
@@ -169,7 +163,6 @@ function PublicProfileContent({ data }: { data: PublicProfileResponse }) {
   const windowDays = data.window_days ?? 120
   const summary = data.summary
   const prs = summary.prs || []
-  const excludedPrs = summary.excluded_prs || []
 
   const hasAny =
     summary.total_reviews > 0 || summary.declined > 0
@@ -222,12 +215,6 @@ function PublicProfileContent({ data }: { data: PublicProfileResponse }) {
               summary={summary}
               sampleLabel={`${summary.latency_sample_size} samples`}
               includedPrs={prs}
-            />
-            <PrDrawer
-              prs={prs}
-              excludedPrs={excludedPrs}
-              p90LatencySeconds={summary.p90_latency_seconds}
-              showRepo
             />
           </div>
 
