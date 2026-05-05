@@ -6,22 +6,40 @@ interface ProfileSettings {
   hidden: boolean
 }
 
+let cachedSettings: ProfileSettings | null = null
+let fetchPromise: Promise<ProfileSettings> | null = null
+const listeners = new Set<(s: ProfileSettings | null) => void>()
+
+function notify() {
+  for (const listener of listeners) listener(cachedSettings)
+}
+
+function loadSettings(): Promise<ProfileSettings> {
+  if (!fetchPromise) {
+    fetchPromise = apiGet<ProfileSettings>('profile-settings').then(resp => {
+      cachedSettings = resp
+      notify()
+      return resp
+    })
+  }
+  return fetchPromise
+}
+
 export function useProfileVisibility() {
-  const [settings, setSettings] = useState<ProfileSettings | null>(null)
+  const [settings, setSettings] = useState<ProfileSettings | null>(cachedSettings)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (!getSessionToken()) return
-    let cancelled = false
-    apiGet<ProfileSettings>('profile-settings')
-      .then(resp => {
-        if (!cancelled) setSettings(resp)
-      })
-      .catch(() => {
-        /* ignore */
-      })
+    listeners.add(setSettings)
+    if (getSessionToken()) {
+      if (cachedSettings) {
+        setSettings(cachedSettings)
+      } else {
+        loadSettings().catch(() => { /* ignore */ })
+      }
+    }
     return () => {
-      cancelled = true
+      listeners.delete(setSettings)
     }
   }, [])
 
@@ -29,7 +47,10 @@ export function useProfileVisibility() {
     setSaving(true)
     try {
       await apiPost<{ hidden: boolean }>('profile-visibility', { hidden })
-      setSettings(prev => (prev ? { ...prev, hidden } : prev))
+      if (cachedSettings) {
+        cachedSettings = { ...cachedSettings, hidden }
+        notify()
+      }
     } finally {
       setSaving(false)
     }
