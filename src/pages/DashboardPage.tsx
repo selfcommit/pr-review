@@ -15,6 +15,8 @@ import ReviewRequestedTab from '../components/ReviewRequestedTab'
 import MyPrsTab from '../components/MyPrsTab'
 import RecentActivity from '../components/RecentActivity'
 import StatsTab from '../components/StatsTab'
+import { PublicProfileAnnouncement } from '../components/PublicProfileAnnouncement'
+import { useProfileVisibility } from '../hooks/useProfileVisibility'
 import OverallStatsBar from '../components/OverallStatsBar'
 import NotificationToast from '../components/NotificationToast'
 import NotificationPermissionBanner from '../components/NotificationPermissionBanner'
@@ -67,6 +69,7 @@ function DashboardPage() {
   const [prSubTab, setPrSubTab] = useState<PRSubTab>('review-requested')
   const { orgAccess, fetchOrgs } = useOrgAccess()
   const { soundEnabled, setSoundEnabled } = useNotificationPreference()
+  const { settings: profileSettings } = useProfileVisibility()
 
   const [highlightedPRIds, setHighlightedPRIds] = useState<Set<number>>(new Set())
   const [toastMessages, setToastMessages] = useState<ToastMessage[] | null>(null)
@@ -458,6 +461,22 @@ function DashboardPage() {
                 <span>Refreshing</span>
               </div>
             )}
+            {user && profileSettings && (
+              <a
+                href={`/u/${profileSettings.login}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`header-profile-link ${profileSettings.hidden ? 'header-profile-link--hidden' : ''}`}
+                title={profileSettings.hidden ? 'Your public profile is hidden' : 'View your public profile'}
+              >
+                <span className="header-profile-link-label">View public profile</span>
+                <span
+                  className={`header-profile-badge ${profileSettings.hidden ? 'header-profile-badge--hidden' : 'header-profile-badge--public'}`}
+                >
+                  {profileSettings.hidden ? 'Hidden' : 'Public'}
+                </span>
+              </a>
+            )}
             {user && (
               <div className="user-info">
                 <img src={user.avatar_url} alt={user.login} className="user-avatar" />
@@ -479,6 +498,8 @@ function DashboardPage() {
           </div>
         </div>
       </header>
+
+      <PublicProfileAnnouncement />
 
       {toastMessages && toastMessages.length > 0 && (
         <NotificationToast

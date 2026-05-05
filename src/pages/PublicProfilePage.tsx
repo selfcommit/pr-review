@@ -82,7 +82,11 @@ function PublicProfilePage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!login) return
+    if (!login) {
+      document.title = 'PR Review'
+      return
+    }
+    document.title = `@${login} - PR Review Stats`
     let cancelled = false
     setLoading(true)
     setError(null)
@@ -94,6 +98,7 @@ function PublicProfilePage() {
       .then(resp => {
         if (cancelled) return
         setData(resp)
+        document.title = `@${resp.login} - PR Review Stats`
       })
       .catch((err: ApiError) => {
         if (cancelled) return

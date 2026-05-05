@@ -118,6 +118,19 @@ function LandingPage() {
           )}
         </div>
 
+        <section className="landing-feature-section">
+          <h2 className="landing-feature-title">Shareable review profiles</h2>
+          <p className="landing-feature-description">
+            Every signed-in user gets a public stats page so teammates and hiring
+            managers can see review activity at a glance.
+          </p>
+          <div className="landing-feature-url">
+            {window.location.host}/u/<span className="landing-feature-url-var">&lt;username&gt;</span>
+          </div>
+          <p className="landing-feature-note">
+            Public by default. Hide yours in one click from the Stats tab.
+          </p>
+        </section>
       </div>
     </div>
   )

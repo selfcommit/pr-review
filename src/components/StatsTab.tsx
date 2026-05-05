@@ -1,7 +1,7 @@
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useState } from 'react'
 import { RepoStats, StatsPR, StatsSummary, formatLatency } from '../types/stats'
 import { useStats } from '../hooks/useStats'
-import { apiGet, apiPost } from '../utils/api'
+import { useProfileVisibility } from '../hooks/useProfileVisibility'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
@@ -269,44 +269,13 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
   )
 }
 
-interface ProfileSettings {
-  login: string
-  hidden: boolean
-}
-
-function ShareProfileCard() {
-  const [settings, setSettings] = useState<ProfileSettings | null>(null)
-  const [saving, setSaving] = useState(false)
+export function ShareProfileCard() {
+  const { settings, saving, setHidden } = useProfileVisibility()
   const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    apiGet<ProfileSettings>('profile-settings')
-      .then(resp => {
-        if (!cancelled) setSettings(resp)
-      })
-      .catch(() => {
-        /* ignore */
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   if (!settings) return null
 
   const profileUrl = `${window.location.origin}/u/${settings.login}`
-
-  const toggleHidden = async () => {
-    const next = !settings.hidden
-    setSaving(true)
-    try {
-      await apiPost<{ hidden: boolean }>('profile-visibility', { hidden: next })
-      setSettings({ ...settings, hidden: next })
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const copyLink = async () => {
     try {
@@ -319,14 +288,14 @@ function ShareProfileCard() {
   }
 
   return (
-    <div className="share-profile-card">
+    <div className="share-profile-card share-profile-card--prominent">
       <div className="share-profile-card-header">
         <div>
           <h3 className="share-profile-card-title">Share your profile</h3>
           <p className="share-profile-card-subtitle">
             {settings.hidden
               ? 'Your public profile is hidden. Only you can see these stats.'
-              : 'Your stats are publicly visible at the link below.'}
+              : 'Your stats are publicly visible. Share the link with teammates.'}
           </p>
         </div>
         <span
@@ -352,13 +321,25 @@ function ShareProfileCard() {
         >
           {copied ? 'Copied!' : 'Copy link'}
         </button>
+        <a
+          href={profileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`share-profile-open-btn ${settings.hidden ? 'share-profile-open-btn--disabled' : ''}`}
+          aria-disabled={settings.hidden}
+          onClick={e => {
+            if (settings.hidden) e.preventDefault()
+          }}
+        >
+          Open
+        </a>
       </div>
 
       <label className="share-profile-toggle">
         <input
           type="checkbox"
           checked={settings.hidden}
-          onChange={toggleHidden}
+          onChange={() => setHidden(!settings.hidden)}
           disabled={saving}
         />
         <span>Hide my public profile</span>
