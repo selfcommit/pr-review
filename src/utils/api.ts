@@ -1,4 +1,5 @@
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const AUTH_BASE = `${SUPABASE_URL}/functions/v1/github-auth`;
 
 const SESSION_KEY = 'session_token';
@@ -79,6 +80,26 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(data.error || `Request failed (${resp.status})`);
   }
   return data;
+}
+
+export async function apiGetPublic<T>(path: string): Promise<T> {
+  const resp = await fetch(`${AUTH_BASE}/${path}`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const err = new Error(data?.error || `Request failed (${resp.status})`) as Error & {
+      status?: number;
+      payload?: unknown;
+    };
+    err.status = resp.status;
+    err.payload = data;
+    throw err;
+  }
+  return data as T;
 }
 
 export async function logout(): Promise<void> {

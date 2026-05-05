@@ -4,6 +4,7 @@ import LandingPage from './pages/LandingPage'
 import DashboardPage from './pages/DashboardPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
 import AdminUsersPage from './pages/AdminUsersPage'
+import PublicProfilePage from './pages/PublicProfilePage'
 import { getSessionToken, setSessionToken, setCachedUser } from './utils/api'
 
 const ERROR_CODE_MESSAGES: Record<string, string> = {
@@ -159,6 +160,7 @@ function App() {
           element={isAuthenticated ? <AdminUsersPage /> : <Navigate to="/" replace />}
         />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route path="/u/:login" element={<PublicProfilePage />} />
       </Routes>
     </BrowserRouter>
   )

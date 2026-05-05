@@ -2010,3 +2010,119 @@
     font-size: 10px;
   }
 }
+
+.share-profile-card {
+  background: rgba(30, 41, 59, 0.3);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+  border-radius: 16px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.share-profile-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.share-profile-card-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.share-profile-card-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.share-profile-badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.share-profile-badge--public {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.share-profile-badge--hidden {
+  background: rgba(100, 116, 139, 0.18);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.share-profile-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.share-profile-url {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(71, 85, 105, 0.4);
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+}
+
+.share-profile-url:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.share-profile-copy-btn {
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease;
+  flex-shrink: 0;
+}
+
+.share-profile-copy-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.share-profile-copy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.share-profile-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #cbd5e1;
+  cursor: pointer;
+  user-select: none;
+  width: fit-content;
+}
+
+.share-profile-toggle input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #3b82f6;
+}

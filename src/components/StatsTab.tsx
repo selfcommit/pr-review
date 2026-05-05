@@ -1,6 +1,7 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { RepoStats, StatsPR, StatsSummary, formatLatency } from '../types/stats'
 import { useStats } from '../hooks/useStats'
+import { apiGet, apiPost } from '../utils/api'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
@@ -268,6 +269,104 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
   )
 }
 
+interface ProfileSettings {
+  login: string
+  hidden: boolean
+}
+
+function ShareProfileCard() {
+  const [settings, setSettings] = useState<ProfileSettings | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    apiGet<ProfileSettings>('profile-settings')
+      .then(resp => {
+        if (!cancelled) setSettings(resp)
+      })
+      .catch(() => {
+        /* ignore */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!settings) return null
+
+  const profileUrl = `${window.location.origin}/u/${settings.login}`
+
+  const toggleHidden = async () => {
+    const next = !settings.hidden
+    setSaving(true)
+    try {
+      await apiPost<{ hidden: boolean }>('profile-visibility', { hidden: next })
+      setSettings({ ...settings, hidden: next })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(profileUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <div className="share-profile-card">
+      <div className="share-profile-card-header">
+        <div>
+          <h3 className="share-profile-card-title">Share your profile</h3>
+          <p className="share-profile-card-subtitle">
+            {settings.hidden
+              ? 'Your public profile is hidden. Only you can see these stats.'
+              : 'Your stats are publicly visible at the link below.'}
+          </p>
+        </div>
+        <span
+          className={`share-profile-badge ${settings.hidden ? 'share-profile-badge--hidden' : 'share-profile-badge--public'}`}
+        >
+          {settings.hidden ? 'Hidden' : 'Public'}
+        </span>
+      </div>
+
+      <div className="share-profile-url-row">
+        <input
+          type="text"
+          readOnly
+          value={profileUrl}
+          className="share-profile-url"
+          onFocus={e => e.currentTarget.select()}
+        />
+        <button
+          type="button"
+          onClick={copyLink}
+          className="share-profile-copy-btn"
+          disabled={settings.hidden}
+        >
+          {copied ? 'Copied!' : 'Copy link'}
+        </button>
+      </div>
+
+      <label className="share-profile-toggle">
+        <input
+          type="checkbox"
+          checked={settings.hidden}
+          onChange={toggleHidden}
+          disabled={saving}
+        />
+        <span>Hide my public profile</span>
+      </label>
+    </div>
+  )
+}
+
 function StatsTab() {
   const { data, refreshing, error, refresh } = useStats()
 
@@ -305,6 +404,7 @@ function StatsTab() {
 
   return (
     <div className="stats-tab">
+      <ShareProfileCard />
       <div className="stats-section">
         <div className="stats-section-header">
           <h2 className="stats-section-title">Per Repository</h2>

@@ -1602,6 +1602,217 @@ async function resolveReviewTimestamps(
   return timestamps;
 }
 
+interface AssembledStats {
+  summary: {
+    total_reviews: number;
+    approved: number;
+    changes_requested: number;
+    commented: number;
+    declined: number;
+    p90_latency_seconds: number | null;
+    latency_sample_size: number;
+    prs: unknown[];
+    excluded_prs: unknown[];
+  };
+  repos: unknown[];
+  window_days: number;
+}
+
+async function assembleStats(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  githubUserId: number
+): Promise<AssembledStats> {
+  const windowStartIso = new Date(
+    Date.now() - STATS_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const [{ data: reviews }, { data: declines }] = await Promise.all([
+    supabase
+      .from("pr_reviews")
+      .select(
+        "review_id, pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
+      )
+      .eq("github_user_id", githubUserId)
+      .gte("submitted_at", windowStartIso),
+    supabase
+      .from("pr_declines")
+      .select("pr_id, repo_full_name, declined_at")
+      .eq("github_user_id", githubUserId)
+      .gte("declined_at", windowStartIso),
+  ]);
+
+  const declineRows = (declines || []) as Array<{
+    pr_id: number;
+    repo_full_name: string;
+  }>;
+  const declinedPrIds = new Set<number>(declineRows.map((d) => d.pr_id));
+  const declinedByRepo = new Map<string, number>();
+  for (const d of declineRows) {
+    declinedByRepo.set(
+      d.repo_full_name,
+      (declinedByRepo.get(d.repo_full_name) || 0) + 1
+    );
+  }
+
+  const rows = (reviews || []).filter(
+    (r: { pr_id: number }) => !declinedPrIds.has(r.pr_id)
+  );
+
+  interface IncludedPr {
+    review_id: number;
+    pr_id: number;
+    pr_number: number;
+    title: string;
+    html_url: string;
+    latency_seconds: number | null;
+    review_state: string;
+    submitted_at: string;
+    repo: string;
+  }
+
+  interface RepoAgg {
+    repo: string;
+    total: number;
+    approved: number;
+    changesRequested: number;
+    commented: number;
+    reviewEvents: IncludedPr[];
+  }
+
+  const byRepo = new Map<string, RepoAgg>();
+
+  for (const r of rows) {
+    const repo = r.repo_full_name as string;
+    let agg = byRepo.get(repo);
+    if (!agg) {
+      agg = {
+        repo,
+        total: 0,
+        approved: 0,
+        changesRequested: 0,
+        commented: 0,
+        reviewEvents: [],
+      };
+      byRepo.set(repo, agg);
+    }
+    agg.total += 1;
+    const state = (r.review_state as string) || "commented";
+    if (state === "approved") agg.approved += 1;
+    else if (state === "changes_requested") agg.changesRequested += 1;
+    else agg.commented += 1;
+
+    const lat = r.latency_seconds as number | null;
+    if (state === "approved" || state === "changes_requested") {
+      agg.reviewEvents.push({
+        review_id: r.review_id as number,
+        pr_id: r.pr_id as number,
+        pr_number: r.pr_number as number,
+        title: (r.pr_title as string) || "",
+        html_url: (r.pr_html_url as string) || "",
+        latency_seconds: typeof lat === "number" && lat >= 0 ? lat : null,
+        review_state: state,
+        submitted_at: r.submitted_at as string,
+        repo: repo,
+      });
+    }
+  }
+
+  function percentile(values: number[], p: number): number | null {
+    if (values.length === 0) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = Math.ceil((p / 100) * sorted.length) - 1;
+    return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
+  }
+
+  for (const repo of declinedByRepo.keys()) {
+    if (!byRepo.has(repo)) {
+      byRepo.set(repo, {
+        repo,
+        total: 0,
+        approved: 0,
+        changesRequested: 0,
+        commented: 0,
+        reviewEvents: [],
+      });
+    }
+  }
+
+  const perRepo = Array.from(byRepo.values()).map((agg) => {
+    const timed = agg.reviewEvents.filter(
+      (p) => p.latency_seconds !== null
+    ) as (IncludedPr & { latency_seconds: number })[];
+    const unrequested = agg.reviewEvents.filter(
+      (p) => p.latency_seconds === null
+    );
+    timed.sort((a, b) => b.latency_seconds - a.latency_seconds);
+    const latencies = timed.map((p) => p.latency_seconds);
+    const p90 = percentile(latencies, 90);
+    const excluded_prs =
+      p90 === null ? [] : timed.filter((p) => p.latency_seconds > p90);
+    const includedTimed =
+      p90 === null ? timed : timed.filter((p) => p.latency_seconds <= p90);
+    const prs = [...includedTimed, ...unrequested];
+    return {
+      repo: agg.repo,
+      total_reviews: agg.total,
+      approved: agg.approved,
+      changes_requested: agg.changesRequested,
+      commented: agg.commented,
+      declined: declinedByRepo.get(agg.repo) || 0,
+      p90_latency_seconds: p90,
+      latency_sample_size: agg.reviewEvents.length,
+      prs,
+      excluded_prs,
+    };
+  });
+
+  perRepo.sort(
+    (a, b) => b.total_reviews + b.declined - (a.total_reviews + a.declined)
+  );
+
+  const allGlobalPrs = perRepo.flatMap((r) => [...r.prs, ...r.excluded_prs]);
+  const allGlobalTimed = allGlobalPrs.filter(
+    (p) => p.latency_seconds !== null
+  ) as (IncludedPr & { latency_seconds: number })[];
+  const allGlobalUnrequested = allGlobalPrs.filter(
+    (p) => p.latency_seconds === null
+  );
+  const allLatencies = allGlobalTimed.map((p) => p.latency_seconds);
+  const globalP90 = percentile(allLatencies, 90);
+
+  const summaryExcludedPrs =
+    globalP90 === null
+      ? []
+      : allGlobalTimed
+          .filter((p) => p.latency_seconds > globalP90)
+          .sort((a, b) => b.latency_seconds - a.latency_seconds);
+  const summaryIncludedTimed =
+    globalP90 === null
+      ? allGlobalTimed.sort((a, b) => b.latency_seconds - a.latency_seconds)
+      : allGlobalTimed
+          .filter((p) => p.latency_seconds <= globalP90)
+          .sort((a, b) => b.latency_seconds - a.latency_seconds);
+  const summaryPrs = [...summaryIncludedTimed, ...allGlobalUnrequested];
+
+  const summary = {
+    total_reviews: perRepo.reduce((s, r) => s + r.total_reviews, 0),
+    approved: perRepo.reduce((s, r) => s + r.approved, 0),
+    changes_requested: perRepo.reduce((s, r) => s + r.changes_requested, 0),
+    commented: perRepo.reduce((s, r) => s + r.commented, 0),
+    declined: declinedPrIds.size,
+    p90_latency_seconds: globalP90,
+    latency_sample_size: allGlobalPrs.length,
+    prs: summaryPrs,
+    excluded_prs: summaryExcludedPrs,
+  };
+
+  return {
+    summary,
+    repos: perRepo,
+    window_days: STATS_WINDOW_DAYS,
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -2520,208 +2731,114 @@ Deno.serve(async (req: Request) => {
         .eq("github_user_id", user.github_user_id)
         .maybeSingle();
 
-      const windowStartIso = new Date(
-        Date.now() - STATS_WINDOW_DAYS * 24 * 60 * 60 * 1000
-      ).toISOString();
-
-      const [{ data: reviews }, { data: declines }] = await Promise.all([
-        supabase
-          .from("pr_reviews")
-          .select(
-            "review_id, pr_id, pr_number, pr_title, pr_html_url, repo_full_name, review_state, submitted_at, latency_seconds"
-          )
-          .eq("github_user_id", user.github_user_id)
-          .gte("submitted_at", windowStartIso),
-        supabase
-          .from("pr_declines")
-          .select("pr_id, repo_full_name, declined_at")
-          .eq("github_user_id", user.github_user_id)
-          .gte("declined_at", windowStartIso),
-      ]);
-
-      const declineRows = (declines || []) as Array<{
-        pr_id: number;
-        repo_full_name: string;
-      }>;
-      const declinedPrIds = new Set<number>(declineRows.map((d) => d.pr_id));
-      const declinedByRepo = new Map<string, number>();
-      for (const d of declineRows) {
-        declinedByRepo.set(
-          d.repo_full_name,
-          (declinedByRepo.get(d.repo_full_name) || 0) + 1
-        );
-      }
-
-      const rows = (reviews || []).filter(
-        (r: { pr_id: number }) => !declinedPrIds.has(r.pr_id)
-      );
-
-      interface IncludedPr {
-        review_id: number;
-        pr_id: number;
-        pr_number: number;
-        title: string;
-        html_url: string;
-        latency_seconds: number | null;
-        review_state: string;
-        submitted_at: string;
-        repo: string;
-      }
-
-      interface RepoAgg {
-        repo: string;
-        total: number;
-        approved: number;
-        changesRequested: number;
-        commented: number;
-        reviewEvents: IncludedPr[];
-      }
-
-      const byRepo = new Map<string, RepoAgg>();
-
-      for (const r of rows) {
-        const repo = r.repo_full_name as string;
-        let agg = byRepo.get(repo);
-        if (!agg) {
-          agg = {
-            repo,
-            total: 0,
-            approved: 0,
-            changesRequested: 0,
-            commented: 0,
-            reviewEvents: [],
-          };
-          byRepo.set(repo, agg);
-        }
-        agg.total += 1;
-        const state = (r.review_state as string) || "commented";
-        if (state === "approved") agg.approved += 1;
-        else if (state === "changes_requested") agg.changesRequested += 1;
-        else agg.commented += 1;
-
-        const lat = r.latency_seconds as number | null;
-        if (state === "approved" || state === "changes_requested") {
-          agg.reviewEvents.push({
-            review_id: r.review_id as number,
-            pr_id: r.pr_id as number,
-            pr_number: r.pr_number as number,
-            title: (r.pr_title as string) || "",
-            html_url: (r.pr_html_url as string) || "",
-            latency_seconds:
-              typeof lat === "number" && lat >= 0 ? lat : null,
-            review_state: state,
-            submitted_at: r.submitted_at as string,
-            repo: repo,
-          });
-        }
-      }
-
-      function percentile(values: number[], p: number): number | null {
-        if (values.length === 0) return null;
-        const sorted = [...values].sort((a, b) => a - b);
-        const idx = Math.ceil((p / 100) * sorted.length) - 1;
-        return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
-      }
-
-      for (const repo of declinedByRepo.keys()) {
-        if (!byRepo.has(repo)) {
-          byRepo.set(repo, {
-            repo,
-            total: 0,
-            approved: 0,
-            changesRequested: 0,
-            commented: 0,
-            reviewEvents: [],
-          });
-        }
-      }
-
-      const perRepo = Array.from(byRepo.values()).map((agg) => {
-        const timed = agg.reviewEvents.filter(
-          (p) => p.latency_seconds !== null
-        ) as (IncludedPr & { latency_seconds: number })[];
-        const unrequested = agg.reviewEvents.filter(
-          (p) => p.latency_seconds === null
-        );
-        timed.sort((a, b) => b.latency_seconds - a.latency_seconds);
-        const latencies = timed.map((p) => p.latency_seconds);
-        const p90 = percentile(latencies, 90);
-        const excluded_prs =
-          p90 === null
-            ? []
-            : timed.filter((p) => p.latency_seconds > p90);
-        const includedTimed =
-          p90 === null
-            ? timed
-            : timed.filter((p) => p.latency_seconds <= p90);
-        const prs = [...includedTimed, ...unrequested];
-        return {
-          repo: agg.repo,
-          total_reviews: agg.total,
-          approved: agg.approved,
-          changes_requested: agg.changesRequested,
-          commented: agg.commented,
-          declined: declinedByRepo.get(agg.repo) || 0,
-          p90_latency_seconds: p90,
-          latency_sample_size: agg.reviewEvents.length,
-          prs,
-          excluded_prs,
-        };
-      });
-
-      perRepo.sort((a, b) => (b.total_reviews + b.declined) - (a.total_reviews + a.declined));
-
-      const allGlobalPrs = perRepo.flatMap((r) =>
-        [...r.prs, ...r.excluded_prs]
-      );
-      const allGlobalTimed = allGlobalPrs.filter(
-        (p) => p.latency_seconds !== null
-      ) as (IncludedPr & { latency_seconds: number })[];
-      const allGlobalUnrequested = allGlobalPrs.filter(
-        (p) => p.latency_seconds === null
-      );
-      const allLatencies = allGlobalTimed.map((p) => p.latency_seconds);
-      const globalP90 = percentile(allLatencies, 90);
-
-      const summaryExcludedPrs =
-        globalP90 === null
-          ? []
-          : allGlobalTimed
-              .filter((p) => p.latency_seconds > globalP90)
-              .sort((a, b) => b.latency_seconds - a.latency_seconds);
-      const summaryIncludedTimed =
-        globalP90 === null
-          ? allGlobalTimed.sort(
-              (a, b) => b.latency_seconds - a.latency_seconds
-            )
-          : allGlobalTimed
-              .filter((p) => p.latency_seconds <= globalP90)
-              .sort((a, b) => b.latency_seconds - a.latency_seconds);
-      const summaryPrs = [
-        ...summaryIncludedTimed,
-        ...allGlobalUnrequested,
-      ];
-
-      const summary = {
-        total_reviews: perRepo.reduce((s, r) => s + r.total_reviews, 0),
-        approved: perRepo.reduce((s, r) => s + r.approved, 0),
-        changes_requested: perRepo.reduce(
-          (s, r) => s + r.changes_requested,
-          0
-        ),
-        commented: perRepo.reduce((s, r) => s + r.commented, 0),
-        declined: declinedPrIds.size,
-        p90_latency_seconds: globalP90,
-        latency_sample_size: allGlobalPrs.length,
-        prs: summaryPrs,
-        excluded_prs: summaryExcludedPrs,
-      };
-
+      const stats = await assembleStats(supabase, user.github_user_id);
       return jsonResponse({
-        summary,
-        repos: perRepo,
-        window_days: STATS_WINDOW_DAYS,
+        ...stats,
         backfilled_at: freshUser?.stats_backfilled_at ?? null,
+      });
+    }
+
+    if (path?.startsWith("public-stats/")) {
+      const loginParam = decodeURIComponent(path.slice("public-stats/".length))
+        .replace(/\/+$/, "")
+        .trim();
+      if (!loginParam) {
+        return jsonResponse({ error: "Missing login" }, 400);
+      }
+
+      const supabase = getSupabaseAdmin();
+      const { data: profile } = await supabase
+        .from("app_users")
+        .select(
+          "github_user_id, login, name, avatar_url, public_profile_hidden, stats_backfilled_at"
+        )
+        .ilike("login", loginParam)
+        .maybeSingle();
+
+      if (!profile || profile.public_profile_hidden) {
+        return jsonResponse(
+          {
+            enabled: false,
+            login: profile?.login ?? loginParam,
+          },
+          404
+        );
+      }
+
+      const stats = await assembleStats(supabase, profile.github_user_id);
+
+      return new Response(
+        JSON.stringify({
+          enabled: true,
+          login: profile.login,
+          name: profile.name,
+          avatar_url: profile.avatar_url,
+          backfilled_at: profile.stats_backfilled_at ?? null,
+          ...stats,
+        }),
+        {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "application/json",
+            "Cache-Control": "public, max-age=60",
+          },
+        }
+      );
+    }
+
+    if (path === "profile-visibility") {
+      if (req.method !== "POST") {
+        return jsonResponse({ error: "Method not allowed" }, 405);
+      }
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+      let body: { hidden?: boolean } = {};
+      try {
+        body = await req.json();
+      } catch {
+        /* no body */
+      }
+      if (typeof body.hidden !== "boolean") {
+        return jsonResponse({ error: "Missing boolean 'hidden'" }, 400);
+      }
+      await supabase
+        .from("app_users")
+        .update({ public_profile_hidden: body.hidden })
+        .eq("github_user_id", user.github_user_id);
+      return jsonResponse({ hidden: body.hidden });
+    }
+
+    if (path === "profile-settings") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("login, public_profile_hidden")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+      return jsonResponse({
+        login: user.login,
+        hidden: !!user.public_profile_hidden,
       });
     }
 
