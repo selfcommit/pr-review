@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react'
-import { apiGet } from '../utils/api'
+import { apiGet, apiPost } from '../utils/api'
 
-interface OrgAccessInfo {
+export interface OrgAccessInfo {
   login: string
   avatar_url: string
   role: 'admin' | 'member'
+  excluded: boolean
 }
 
 export interface OrgAccessResult {
@@ -19,6 +20,7 @@ interface OrgApiResponse {
     org_login: string
     org_avatar_url: string | null
     role: string
+    excluded?: boolean
   }>
   oauthScopes: string | null
 }
@@ -43,6 +45,7 @@ export function useOrgAccess() {
         login: org.org_login,
         avatar_url: org.org_avatar_url || `https://github.com/${org.org_login}.png?size=80`,
         role: org.role === 'admin' ? 'admin' : 'member',
+        excluded: org.excluded === true,
       }))
 
       setResult({
@@ -60,5 +63,25 @@ export function useOrgAccess() {
     }
   }, [])
 
-  return { orgAccess: result, fetchOrgs }
+  const toggleOrgExclusion = useCallback(async (orgLogin: string, excluded: boolean) => {
+    setResult(prev => ({
+      ...prev,
+      memberOrgs: prev.memberOrgs.map(org =>
+        org.login === orgLogin ? { ...org, excluded } : org
+      ),
+    }))
+
+    try {
+      await apiPost('org-exclusion', { org_login: orgLogin, excluded })
+    } catch {
+      setResult(prev => ({
+        ...prev,
+        memberOrgs: prev.memberOrgs.map(org =>
+          org.login === orgLogin ? { ...org, excluded: !excluded } : org
+        ),
+      }))
+    }
+  }, [])
+
+  return { orgAccess: result, fetchOrgs, toggleOrgExclusion }
 }

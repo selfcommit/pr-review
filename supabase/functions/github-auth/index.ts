@@ -2067,7 +2067,7 @@ Deno.serve(async (req: Request) => {
       const { data: orgs } = await supabase
         .from("user_orgs")
         .select(
-          "org_login, org_id, org_avatar_url, role, last_synced_at"
+          "org_login, org_id, org_avatar_url, role, excluded, last_synced_at"
         )
         .eq("github_user_id", user.github_user_id)
         .order("org_login");
@@ -2076,6 +2076,46 @@ Deno.serve(async (req: Request) => {
         orgs: orgs || [],
         oauthScopes: user.oauth_scopes || null,
       });
+    }
+
+    if (path === "org-exclusion" && req.method === "POST") {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("github_user_id")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      const body = await req.json();
+      const orgLogin = body.org_login;
+      const excluded = body.excluded === true;
+
+      if (!orgLogin || typeof orgLogin !== "string") {
+        return jsonResponse({ error: "org_login is required" }, 400);
+      }
+
+      const { error } = await supabase
+        .from("user_orgs")
+        .update({ excluded })
+        .eq("github_user_id", user.github_user_id)
+        .eq("org_login", orgLogin);
+
+      if (error) {
+        return jsonResponse({ error: "Failed to update org exclusion" }, 500);
+      }
+
+      return jsonResponse({ org_login: orgLogin, excluded });
     }
 
     if (path === "pull-requests") {
@@ -2168,19 +2208,37 @@ Deno.serve(async (req: Request) => {
       const oauthScopes =
         reviewReqResp.headers.get("X-OAuth-Scopes") || null;
 
-      const { data: declinedRowsPR } = await supabase
-        .from("pr_declines")
-        .select("pr_id")
-        .eq("github_user_id", user.github_user_id);
+      const [{ data: declinedRowsPR }, { data: excludedOrgRows }] =
+        await Promise.all([
+          supabase
+            .from("pr_declines")
+            .select("pr_id")
+            .eq("github_user_id", user.github_user_id),
+          supabase
+            .from("user_orgs")
+            .select("org_login")
+            .eq("github_user_id", user.github_user_id)
+            .eq("excluded", true),
+        ]);
       const declinedIdsPR = new Set<number>(
         (declinedRowsPR || []).map((r: { pr_id: number }) => r.pr_id)
+      );
+      const excludedOrgs = new Set<string>(
+        (excludedOrgRows || []).map((r: { org_login: string }) =>
+          r.org_login.toLowerCase()
+        )
       );
 
       const reviewReqItems: GitHubSearchItem[] = (
         reviewReqResult.items && Array.isArray(reviewReqResult.items)
           ? (reviewReqResult.items as GitHubSearchItem[])
           : []
-      ).filter((item) => !declinedIdsPR.has(item.id));
+      ).filter((item) => {
+        if (declinedIdsPR.has(item.id)) return false;
+        const owner = item.repository_url.split("/").slice(-2)[0].toLowerCase();
+        if (excludedOrgs.has(owner)) return false;
+        return true;
+      });
       const reviewedItemsArr: GitHubSearchItem[] =
         reviewedResult.items && Array.isArray(reviewedResult.items)
           ? (reviewedResult.items as GitHubSearchItem[])
@@ -2308,15 +2366,36 @@ Deno.serve(async (req: Request) => {
         | { items?: unknown[] }
         | undefined;
       if (cachedReviewRequested?.items && Array.isArray(cachedReviewRequested.items)) {
-        const { data: declinedRowsCache } = await supabase
-          .from("pr_declines")
-          .select("pr_id")
-          .eq("github_user_id", user.github_user_id);
+        const [{ data: declinedRowsCache }, { data: excludedOrgRowsCache }] =
+          await Promise.all([
+            supabase
+              .from("pr_declines")
+              .select("pr_id")
+              .eq("github_user_id", user.github_user_id),
+            supabase
+              .from("user_orgs")
+              .select("org_login")
+              .eq("github_user_id", user.github_user_id)
+              .eq("excluded", true),
+          ]);
         const declinedIdsCache = new Set<number>(
           (declinedRowsCache || []).map((r: { pr_id: number }) => r.pr_id)
         );
+        const excludedOrgsCache = new Set<string>(
+          (excludedOrgRowsCache || []).map((r: { org_login: string }) =>
+            r.org_login.toLowerCase()
+          )
+        );
         cachedReviewRequested.items = cachedReviewRequested.items.filter(
-          (item: unknown) => !declinedIdsCache.has((item as { id: number }).id)
+          (item: unknown) => {
+            const i = item as { id: number; repository_url?: string };
+            if (declinedIdsCache.has(i.id)) return false;
+            if (i.repository_url) {
+              const owner = i.repository_url.split("/").slice(-2)[0].toLowerCase();
+              if (excludedOrgsCache.has(owner)) return false;
+            }
+            return true;
+          }
         );
       }
 

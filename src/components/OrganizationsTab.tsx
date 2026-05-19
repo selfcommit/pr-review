@@ -3,9 +3,10 @@ import type { OrgAccessResult } from '../hooks/useOrgAccess'
 interface OrganizationsTabProps {
   orgAccess: OrgAccessResult
   onManageAccess: () => void
+  onToggleExclusion: (orgLogin: string, excluded: boolean) => void
 }
 
-function OrganizationsTab({ orgAccess, onManageAccess }: OrganizationsTabProps) {
+function OrganizationsTab({ orgAccess, onManageAccess, onToggleExclusion }: OrganizationsTabProps) {
   if (orgAccess.loading && orgAccess.memberOrgs.length === 0) {
     return (
       <div className="orgs-tab-loading">
@@ -14,6 +15,9 @@ function OrganizationsTab({ orgAccess, onManageAccess }: OrganizationsTabProps) 
       </div>
     )
   }
+
+  const activeOrgs = orgAccess.memberOrgs.filter(o => !o.excluded)
+  const excludedOrgs = orgAccess.memberOrgs.filter(o => o.excluded)
 
   return (
     <div className="orgs-tab">
@@ -26,19 +30,19 @@ function OrganizationsTab({ orgAccess, onManageAccess }: OrganizationsTabProps) 
         </div>
       )}
 
-      {orgAccess.memberOrgs.length > 0 && (
+      {activeOrgs.length > 0 && (
         <div className="orgs-tab-section">
           <div className="orgs-tab-section-header">
             <h2 className="orgs-tab-section-title orgs-tab-section-title-ok">
-              Connected
-              <span className="orgs-tab-count orgs-tab-count-ok">{orgAccess.memberOrgs.length}</span>
+              Active
+              <span className="orgs-tab-count orgs-tab-count-ok">{activeOrgs.length}</span>
             </h2>
             <p className="orgs-tab-section-desc">
-              Your GitHub account has access to these organizations. Private PRs from these orgs appear in your dashboard.
+              PRs from these organizations appear in your review dashboard.
             </p>
           </div>
           <div className="orgs-tab-list">
-            {orgAccess.memberOrgs.map(org => (
+            {activeOrgs.map(org => (
               <div key={org.login} className="orgs-tab-card orgs-tab-card-connected">
                 <div className="orgs-tab-card-left">
                   <img src={org.avatar_url} alt={org.login} className="orgs-tab-avatar" />
@@ -48,12 +52,57 @@ function OrganizationsTab({ orgAccess, onManageAccess }: OrganizationsTabProps) 
                   </div>
                 </div>
                 <div className="orgs-tab-card-right">
-                  <span className="orgs-tab-status orgs-tab-status-connected">
-                    <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
-                      <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/>
+                  <button
+                    className="orgs-tab-toggle-btn orgs-tab-toggle-btn-active"
+                    onClick={() => onToggleExclusion(org.login, true)}
+                    title="Hide PRs from this org"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                      <circle cx="12" cy="12" r="3" />
                     </svg>
-                    Connected
-                  </span>
+                    Visible
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {excludedOrgs.length > 0 && (
+        <div className="orgs-tab-section">
+          <div className="orgs-tab-section-header">
+            <h2 className="orgs-tab-section-title orgs-tab-section-title-excluded">
+              Hidden
+              <span className="orgs-tab-count orgs-tab-count-excluded">{excludedOrgs.length}</span>
+            </h2>
+            <p className="orgs-tab-section-desc">
+              PRs from these organizations are hidden from your review dashboard.
+            </p>
+          </div>
+          <div className="orgs-tab-list">
+            {excludedOrgs.map(org => (
+              <div key={org.login} className="orgs-tab-card orgs-tab-card-excluded">
+                <div className="orgs-tab-card-left">
+                  <img src={org.avatar_url} alt={org.login} className="orgs-tab-avatar" />
+                  <div className="orgs-tab-card-info">
+                    <span className="orgs-tab-card-name">{org.login}</span>
+                    <span className="orgs-tab-card-role">{org.role === 'admin' ? 'Admin' : 'Member'}</span>
+                  </div>
+                </div>
+                <div className="orgs-tab-card-right">
+                  <button
+                    className="orgs-tab-toggle-btn orgs-tab-toggle-btn-excluded"
+                    onClick={() => onToggleExclusion(org.login, false)}
+                    title="Show PRs from this org"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                      <line x1="1" y1="1" x2="23" y2="23" />
+                    </svg>
+                    Hidden
+                  </button>
                 </div>
               </div>
             ))}
