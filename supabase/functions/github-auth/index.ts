@@ -2168,10 +2168,19 @@ Deno.serve(async (req: Request) => {
       const oauthScopes =
         reviewReqResp.headers.get("X-OAuth-Scopes") || null;
 
-      const reviewReqItems: GitHubSearchItem[] =
+      const { data: declinedRowsPR } = await supabase
+        .from("pr_declines")
+        .select("pr_id")
+        .eq("github_user_id", user.github_user_id);
+      const declinedIdsPR = new Set<number>(
+        (declinedRowsPR || []).map((r: { pr_id: number }) => r.pr_id)
+      );
+
+      const reviewReqItems: GitHubSearchItem[] = (
         reviewReqResult.items && Array.isArray(reviewReqResult.items)
           ? (reviewReqResult.items as GitHubSearchItem[])
-          : [];
+          : []
+      ).filter((item) => !declinedIdsPR.has(item.id));
       const reviewedItemsArr: GitHubSearchItem[] =
         reviewedResult.items && Array.isArray(reviewedResult.items)
           ? (reviewedResult.items as GitHubSearchItem[])
@@ -2226,7 +2235,7 @@ Deno.serve(async (req: Request) => {
       }
 
       const responsePayload = {
-        reviewRequested: reviewReqResult,
+        reviewRequested: { ...reviewReqResult, items: reviewReqItems },
         reviewed: reviewedResult,
         reviewTimestamps,
         username: user.login,
@@ -2294,10 +2303,27 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ cached: false });
       }
 
+      const payload = row.payload as Record<string, unknown>;
+      const cachedReviewRequested = payload.reviewRequested as
+        | { items?: unknown[] }
+        | undefined;
+      if (cachedReviewRequested?.items && Array.isArray(cachedReviewRequested.items)) {
+        const { data: declinedRowsCache } = await supabase
+          .from("pr_declines")
+          .select("pr_id")
+          .eq("github_user_id", user.github_user_id);
+        const declinedIdsCache = new Set<number>(
+          (declinedRowsCache || []).map((r: { pr_id: number }) => r.pr_id)
+        );
+        cachedReviewRequested.items = cachedReviewRequested.items.filter(
+          (item: unknown) => !declinedIdsCache.has((item as { id: number }).id)
+        );
+      }
+
       return jsonResponse({
         cached: true,
         updatedAt: row.updated_at,
-        ...(row.payload as Record<string, unknown>),
+        ...payload,
       });
     }
 
