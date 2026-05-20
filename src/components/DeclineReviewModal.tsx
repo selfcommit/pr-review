@@ -14,11 +14,14 @@ function DeclineReviewModal({ pr, onClose, onSuccess }: DeclineReviewModalProps)
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showArchivedFallback, setShowArchivedFallback] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
+  const isArchived = pr.archived === true || showArchivedFallback
+
   useEffect(() => {
-    textareaRef.current?.focus()
-  }, [])
+    if (!isArchived) textareaRef.current?.focus()
+  }, [isArchived])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -30,11 +33,36 @@ function DeclineReviewModal({ pr, onClose, onSuccess }: DeclineReviewModalProps)
 
   const prNumber = Number(pr.html_url.split('/pull/')[1])
   const trimmed = reason.trim()
-  const canSubmit = trimmed.length > 0 && trimmed.length <= MAX_REASON && !submitting
+  const canSubmit = isArchived
+    ? !submitting
+    : trimmed.length > 0 && trimmed.length <= MAX_REASON && !submitting
+
+  async function handleSilentRemove() {
+    setSubmitting(true)
+    setError(null)
+    try {
+      await apiPost('decline-review', {
+        repo_full_name: pr.repository.full_name,
+        pr_number: prNumber,
+        pr_id: pr.id,
+        pr_title: pr.title,
+        pr_html_url: pr.html_url,
+        skip_comment: true,
+      })
+      onSuccess(pr.id)
+    } catch (err) {
+      setError((err as Error).message || 'Failed to remove')
+      setSubmitting(false)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!canSubmit) return
+    if (isArchived) {
+      handleSilentRemove()
+      return
+    }
     setSubmitting(true)
     setError(null)
     try {
@@ -48,7 +76,13 @@ function DeclineReviewModal({ pr, onClose, onSuccess }: DeclineReviewModalProps)
       })
       onSuccess(pr.id)
     } catch (err) {
-      setError((err as Error).message || 'Failed to post comment')
+      const msg = (err as Error).message || 'Failed to post comment'
+      if (msg.includes('403')) {
+        setShowArchivedFallback(true)
+        setError(null)
+      } else {
+        setError(msg)
+      }
       setSubmitting(false)
     }
   }
@@ -66,7 +100,7 @@ function DeclineReviewModal({ pr, onClose, onSuccess }: DeclineReviewModalProps)
           <div className="decline-modal-title">
             <span className="decline-modal-emoji" aria-hidden="true">&#x1F3C3;</span>
             <div>
-              <h2>Can't review this PR?</h2>
+              <h2>{isArchived ? 'Remove from review' : "Can't review this PR?"}</h2>
               <p className="decline-modal-subtitle">
                 {pr.repository.name} &middot; #{prNumber} &middot; {pr.title}
               </p>
@@ -81,53 +115,85 @@ function DeclineReviewModal({ pr, onClose, onSuccess }: DeclineReviewModalProps)
             &times;
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="decline-modal-body">
-          <label htmlFor="decline-reason" className="decline-modal-label">
-            Let the author know why. A comment will be posted on your behalf.
-          </label>
-          <textarea
-            id="decline-reason"
-            ref={textareaRef}
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-            onKeyDown={onKeyDown}
-            maxLength={MAX_REASON}
-            rows={4}
-            placeholder="e.g. Out on vacation this week, please ask someone else."
-            className="decline-modal-textarea"
-            disabled={submitting}
-          />
-          <div className="decline-modal-meta">
-            <span className="decline-modal-count">
-              {trimmed.length}/{MAX_REASON}
-            </span>
-            {error && <span className="decline-modal-error">{error}</span>}
-          </div>
-          <div className="decline-modal-preview">
-            <span className="decline-modal-preview-label">Preview</span>
-            <div className="decline-modal-preview-body">
-              <span aria-hidden="true">&#x1F3C3;</span>{' '}
-              {trimmed || <span className="decline-modal-preview-placeholder">Your reason here</span>}
+        {isArchived ? (
+          <div className="decline-modal-body">
+            <p className="decline-modal-label">
+              This repository has been archived. No comment can be posted, but
+              the PR will be removed from your review queue.
+            </p>
+            {error && (
+              <div className="decline-modal-meta">
+                <span className="decline-modal-error">{error}</span>
+              </div>
+            )}
+            <div className="decline-modal-actions">
+              <button
+                type="button"
+                className="decline-modal-cancel"
+                onClick={onClose}
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="decline-modal-submit"
+                onClick={handleSilentRemove}
+                disabled={submitting}
+              >
+                {submitting ? 'Removing...' : 'Remove'}
+              </button>
             </div>
           </div>
-          <div className="decline-modal-actions">
-            <button
-              type="button"
-              className="decline-modal-cancel"
-              onClick={onClose}
+        ) : (
+          <form onSubmit={handleSubmit} className="decline-modal-body">
+            <label htmlFor="decline-reason" className="decline-modal-label">
+              Let the author know why. A comment will be posted on your behalf.
+            </label>
+            <textarea
+              id="decline-reason"
+              ref={textareaRef}
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              onKeyDown={onKeyDown}
+              maxLength={MAX_REASON}
+              rows={4}
+              placeholder="e.g. Out on vacation this week, please ask someone else."
+              className="decline-modal-textarea"
               disabled={submitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="decline-modal-submit"
-              disabled={!canSubmit}
-            >
-              {submitting ? 'Posting...' : 'Post comment'}
-            </button>
-          </div>
-        </form>
+            />
+            <div className="decline-modal-meta">
+              <span className="decline-modal-count">
+                {trimmed.length}/{MAX_REASON}
+              </span>
+              {error && <span className="decline-modal-error">{error}</span>}
+            </div>
+            <div className="decline-modal-preview">
+              <span className="decline-modal-preview-label">Preview</span>
+              <div className="decline-modal-preview-body">
+                <span aria-hidden="true">&#x1F3C3;</span>{' '}
+                {trimmed || <span className="decline-modal-preview-placeholder">Your reason here</span>}
+              </div>
+            </div>
+            <div className="decline-modal-actions">
+              <button
+                type="button"
+                className="decline-modal-cancel"
+                onClick={onClose}
+                disabled={submitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="decline-modal-submit"
+                disabled={!canSubmit}
+              >
+                {submitting ? 'Posting...' : 'Post comment'}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   )

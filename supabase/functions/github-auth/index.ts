@@ -393,6 +393,113 @@ async function fetchReviewRequestedAtBatch(
   return result;
 }
 
+const ARCHIVED_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+async function fetchRepoArchivedStatusBatch(
+  accessToken: string,
+  repoFullNames: string[]
+): Promise<Record<string, boolean>> {
+  const result: Record<string, boolean> = {};
+  if (repoFullNames.length === 0) return result;
+
+  const chunkSize = 20;
+
+  for (let i = 0; i < repoFullNames.length; i += chunkSize) {
+    const chunk = repoFullNames.slice(i, i + chunkSize);
+    const aliases = chunk.map((fullName, idx) => {
+      const [owner, repo] = fullName.split("/");
+      return `repo${idx}: repository(owner: "${owner}", name: "${repo}") { isArchived }`;
+    });
+
+    const query = `query { ${aliases.join(" ")} }`;
+
+    try {
+      const resp = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github.v3+json",
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!resp.ok) {
+        console.error(`[fetchRepoArchivedStatusBatch] graphql failed: ${resp.status}`);
+        continue;
+      }
+
+      const data = await resp.json();
+      if (!data || !data.data) {
+        console.error("[fetchRepoArchivedStatusBatch] empty graphql response", data?.errors);
+        continue;
+      }
+
+      chunk.forEach((fullName, idx) => {
+        const repoData = data.data[`repo${idx}`];
+        if (repoData && typeof repoData.isArchived === "boolean") {
+          result[fullName] = repoData.isArchived;
+        }
+      });
+    } catch (err) {
+      console.error("[fetchRepoArchivedStatusBatch] request failed", err);
+    }
+  }
+
+  return result;
+}
+
+async function getArchivedRepos(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  accessToken: string,
+  repoFullNames: string[]
+): Promise<Set<string>> {
+  if (repoFullNames.length === 0) return new Set();
+
+  const { data: cachedRows } = await supabase
+    .from("archived_repos")
+    .select("repo_full_name, is_archived, checked_at")
+    .in("repo_full_name", repoFullNames);
+
+  const nowMs = Date.now();
+  const archivedSet = new Set<string>();
+  const needsCheck: string[] = [];
+  const cachedMap = new Map<string, { is_archived: boolean; checked_at: string }>();
+
+  for (const row of cachedRows || []) {
+    cachedMap.set(row.repo_full_name, row);
+  }
+
+  for (const name of repoFullNames) {
+    const cached = cachedMap.get(name);
+    if (cached) {
+      const age = nowMs - new Date(cached.checked_at).getTime();
+      if (age < ARCHIVED_CACHE_TTL_MS) {
+        if (cached.is_archived) archivedSet.add(name);
+        continue;
+      }
+    }
+    needsCheck.push(name);
+  }
+
+  if (needsCheck.length > 0) {
+    const freshStatus = await fetchRepoArchivedStatusBatch(accessToken, needsCheck);
+    const now = new Date().toISOString();
+
+    for (const name of needsCheck) {
+      const isArchived = freshStatus[name] ?? false;
+      if (isArchived) archivedSet.add(name);
+
+      await supabase.from("archived_repos").upsert(
+        { repo_full_name: name, is_archived: isArchived, checked_at: now },
+        { onConflict: "repo_full_name" }
+      );
+    }
+  }
+
+  return archivedSet;
+}
+
 const STATS_WINDOW_DAYS = 120;
 const STATS_BACKFILL_TTL_MS = 30 * 60 * 1000;
 const COMMENT_RECHECK_TTL_MS = 5 * 60 * 1000;
@@ -2229,7 +2336,7 @@ Deno.serve(async (req: Request) => {
         )
       );
 
-      const reviewReqItems: GitHubSearchItem[] = (
+      let reviewReqItems: GitHubSearchItem[] = (
         reviewReqResult.items && Array.isArray(reviewReqResult.items)
           ? (reviewReqResult.items as GitHubSearchItem[])
           : []
@@ -2239,6 +2346,39 @@ Deno.serve(async (req: Request) => {
         if (excludedOrgs.has(owner)) return false;
         return true;
       });
+
+      const uniqueRepos = [
+        ...new Set(reviewReqItems.map((i) => i.repository_url.split("/").slice(-2).join("/")))
+      ];
+      const archivedRepos = await getArchivedRepos(supabase, user.access_token, uniqueRepos);
+
+      if (archivedRepos.size > 0) {
+        const archivedItems = reviewReqItems.filter((item) => {
+          const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+          return archivedRepos.has(repoFullName);
+        });
+        for (const item of archivedItems) {
+          const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+          await supabase.from("pr_declines").upsert(
+            {
+              github_user_id: user.github_user_id,
+              pr_id: item.id,
+              pr_number: item.number,
+              repo_full_name: repoFullName,
+              pr_title: (item.title || "").slice(0, 500),
+              pr_html_url: (item.html_url || "").slice(0, 500),
+              declined_at: new Date().toISOString(),
+              comment_id: 0,
+            },
+            { onConflict: "github_user_id,pr_id", ignoreDuplicates: true }
+          );
+        }
+        reviewReqItems = reviewReqItems.filter((item) => {
+          const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+          return !archivedRepos.has(repoFullName);
+        });
+      }
+
       const reviewedItemsArr: GitHubSearchItem[] =
         reviewedResult.items && Array.isArray(reviewedResult.items)
           ? (reviewedResult.items as GitHubSearchItem[])
@@ -2597,6 +2737,38 @@ Deno.serve(async (req: Request) => {
       );
 
       let freshItems = rawFreshItems.filter((i) => !declinedIds.has(i.id));
+
+      const pollUniqueRepos = [
+        ...new Set(freshItems.map((i) => i.repository_url.split("/").slice(-2).join("/")))
+      ];
+      const pollArchivedRepos = await getArchivedRepos(supabase, user.access_token, pollUniqueRepos);
+
+      if (pollArchivedRepos.size > 0) {
+        const archivedPollItems = freshItems.filter((item) => {
+          const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+          return pollArchivedRepos.has(repoFullName);
+        });
+        for (const item of archivedPollItems) {
+          const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+          await supabase.from("pr_declines").upsert(
+            {
+              github_user_id: user.github_user_id,
+              pr_id: item.id,
+              pr_number: item.number,
+              repo_full_name: repoFullName,
+              pr_title: (item.title || "").slice(0, 500),
+              pr_html_url: (item.html_url || "").slice(0, 500),
+              declined_at: new Date().toISOString(),
+              comment_id: 0,
+            },
+            { onConflict: "github_user_id,pr_id", ignoreDuplicates: true }
+          );
+        }
+        freshItems = freshItems.filter((item) => {
+          const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+          return !pollArchivedRepos.has(repoFullName);
+        });
+      }
 
       const { data: snapshots } = await supabase
         .from("user_pr_snapshots")
@@ -3357,6 +3529,7 @@ Deno.serve(async (req: Request) => {
         pr_title?: string;
         pr_html_url?: string;
         reason?: string;
+        skip_comment?: boolean;
       } = {};
       try {
         body = await req.json();
@@ -3368,41 +3541,51 @@ Deno.serve(async (req: Request) => {
       const prNumber = Number(body.pr_number);
       const prId = Number(body.pr_id);
       const reasonRaw = (body.reason || "").trim();
+      const skipComment = body.skip_comment === true;
 
       if (!repo.includes("/") || !Number.isFinite(prNumber) || prNumber <= 0) {
         return jsonResponse({ error: "repo_full_name and pr_number are required" }, 422);
       }
-      if (!reasonRaw) {
-        return jsonResponse({ error: "Please provide a reason" }, 422);
-      }
-      if (reasonRaw.length > 1000) {
-        return jsonResponse({ error: "Reason must be 1000 characters or fewer" }, 422);
-      }
 
-      const [owner, repoName] = repo.split("/");
-      const commentBody = `:runner: ${reasonRaw}`;
-      const ghResp = await fetch(
-        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/issues/${prNumber}/comments`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${declineUser.access_token}`,
-            Accept: "application/vnd.github.v3+json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ body: commentBody }),
+      let commentId = 0;
+      let commentUrl: string | null = null;
+
+      if (skipComment) {
+        // Silent decline: no GitHub comment posted (e.g., archived repos)
+      } else {
+        if (!reasonRaw) {
+          return jsonResponse({ error: "Please provide a reason" }, 422);
         }
-      );
-      if (!ghResp.ok) {
-        const errText = await ghResp.text().catch(() => "");
-        console.error("[decline-review] GitHub post failed", ghResp.status, errText);
-        return jsonResponse(
-          { error: `GitHub rejected comment (${ghResp.status})` },
-          ghResp.status === 403 || ghResp.status === 404 ? ghResp.status : 502
+        if (reasonRaw.length > 1000) {
+          return jsonResponse({ error: "Reason must be 1000 characters or fewer" }, 422);
+        }
+
+        const [owner, repoName] = repo.split("/");
+        const commentBody = `:runner: ${reasonRaw}`;
+        const ghResp = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/issues/${prNumber}/comments`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${declineUser.access_token}`,
+              Accept: "application/vnd.github.v3+json",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ body: commentBody }),
+          }
         );
+        if (!ghResp.ok) {
+          const errText = await ghResp.text().catch(() => "");
+          console.error("[decline-review] GitHub post failed", ghResp.status, errText);
+          return jsonResponse(
+            { error: `GitHub rejected comment (${ghResp.status})` },
+            ghResp.status === 403 || ghResp.status === 404 ? ghResp.status : 502
+          );
+        }
+        const ghComment = (await ghResp.json()) as { id?: number; html_url?: string };
+        commentId = typeof ghComment.id === "number" ? ghComment.id : 0;
+        commentUrl = ghComment.html_url || null;
       }
-      const ghComment = (await ghResp.json()) as { id?: number; html_url?: string };
-      const commentId = typeof ghComment.id === "number" ? ghComment.id : 0;
 
       if (Number.isFinite(prId) && prId > 0) {
         await supabase.from("pr_declines").upsert(
@@ -3423,7 +3606,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({
         success: true,
         comment_id: commentId,
-        comment_url: ghComment.html_url || null,
+        comment_url: commentUrl,
       });
     }
 
