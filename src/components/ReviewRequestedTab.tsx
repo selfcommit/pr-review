@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { PullRequest } from '../types/pullRequest'
 import { mapItem } from '../types/pullRequest'
 import { isOverdue } from '../utils/time'
-import { primeAudio } from '../utils/notificationSound'
+import { primeAudio, playChime } from '../utils/notificationSound'
 import PRCard from './PRCard'
 import DeclineReviewModal from './DeclineReviewModal'
 
@@ -111,11 +111,12 @@ function ReviewRequestedTab({
             role="switch"
             aria-checked={soundEnabled}
             className={`toggle-switch ${soundEnabled ? 'toggle-switch-on' : ''}`}
-            onClick={() => {
+            onClick={async () => {
               const next = !soundEnabled
               onSoundToggle(next)
               if (next) {
-                primeAudio()
+                await primeAudio()
+                await playChime()
               }
             }}
           >
