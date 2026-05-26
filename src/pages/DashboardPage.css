@@ -1293,8 +1293,8 @@
 
 .notification-toast {
   position: fixed;
-  top: 80px;
-  right: 24px;
+  top: calc(80px + env(safe-area-inset-top));
+  right: calc(24px + env(safe-area-inset-right));
   z-index: 200;
   display: flex;
   align-items: flex-start;

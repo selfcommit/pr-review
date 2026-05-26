@@ -5,6 +5,7 @@ import { usePolling } from '../hooks/usePolling'
 import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
+import { shouldUseNativeAuth, getNativeRedirectUrl, openNativeOAuth } from '../utils/nativeAuth'
 import { isOverdue } from '../utils/time'
 import { playChime, unlockAudio, isAudioUnlocked, preWarmAudio, primeAudio, isPrimed, stopKeepalive } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
@@ -411,9 +412,10 @@ function DashboardPage() {
 
   const handleManageOrgAccess = async () => {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+    const useNative = shouldUseNativeAuth()
     const origin = window.location.origin
-    const callbackPath = isInIframe() ? '/auth/callback' : ''
-    const redirectTo = encodeURIComponent(origin + callbackPath)
+    const callbackPath = useNative ? '' : (isInIframe() ? '/auth/callback' : '')
+    const redirectTo = encodeURIComponent(useNative ? getNativeRedirectUrl() : (origin + callbackPath))
     const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
 
     try {
@@ -423,7 +425,9 @@ function DashboardPage() {
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
 
-        if (isInIframe()) {
+        if (useNative) {
+          await openNativeOAuth(data.url)
+        } else if (isInIframe()) {
           window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
         } else {
           window.location.href = data.url

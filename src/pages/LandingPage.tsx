@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { isInIframe } from '../utils/iframe'
+import { shouldUseNativeAuth, getNativeRedirectUrl, openNativeOAuth, listenForAuthCallback } from '../utils/nativeAuth'
 import { setSessionToken, setCachedUser } from '../utils/api'
 import './LandingPage.css'
 
@@ -38,14 +39,45 @@ function LandingPage() {
     return () => window.removeEventListener('message', handleOAuthMessage)
   }, [handleOAuthMessage])
 
+  useEffect(() => {
+    if (!shouldUseNativeAuth()) return
+
+    const cleanup = listenForAuthCallback((params) => {
+      const sessionToken = params.get('session_token')
+      const error = params.get('auth_error')
+      const state = params.get('state')
+      const userRaw = params.get('user')
+      const savedState = sessionStorage.getItem('github_oauth_state')
+
+      if (error) {
+        setSignInError(error)
+        setIsLoading(false)
+        return
+      }
+
+      if (sessionToken && state && state === savedState && userRaw) {
+        setSessionToken(sessionToken)
+        setCachedUser(JSON.parse(userRaw))
+        sessionStorage.removeItem('github_oauth_state')
+        navigate('/dashboard')
+      } else {
+        setSignInError('Sign-in could not be verified. Please try again.')
+        setIsLoading(false)
+      }
+    })
+
+    return cleanup
+  }, [navigate])
+
   const handleSignIn = async () => {
     setIsLoading(true)
     setSignInError(null)
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-      const origin = window.location.origin
-      const callbackPath = isInIframe() ? '/auth/callback' : ''
-      const redirectTo = encodeURIComponent(origin + callbackPath)
+      const useNative = shouldUseNativeAuth()
+      const origin = useNative ? getNativeRedirectUrl().replace('://auth/callback', '://') : window.location.origin
+      const callbackPath = useNative ? 'auth/callback' : (isInIframe() ? '/auth/callback' : '')
+      const redirectTo = encodeURIComponent(useNative ? getNativeRedirectUrl() : (origin + callbackPath))
       const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
 
       const response = await fetch(loginUrl)
@@ -54,7 +86,9 @@ function LandingPage() {
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
 
-        if (isInIframe()) {
+        if (useNative) {
+          await openNativeOAuth(data.url)
+        } else if (isInIframe()) {
           const popup = window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
           if (!popup) {
             setSignInError('Pop-up was blocked by your browser. Please allow pop-ups for this site and try again.')

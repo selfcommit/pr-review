@@ -6,6 +6,7 @@ import AuthCallbackPage from './pages/AuthCallbackPage'
 import AdminUsersPage from './pages/AdminUsersPage'
 import PublicProfilePage from './pages/PublicProfilePage'
 import { getSessionToken, setSessionToken, setCachedUser } from './utils/api'
+import { shouldUseNativeAuth, listenForAuthCallback } from './utils/nativeAuth'
 
 const ERROR_CODE_MESSAGES: Record<string, string> = {
   access_denied: "You cancelled the sign-in request on GitHub.",
@@ -37,22 +38,17 @@ function App() {
   const [authError, setAuthError] = useState<{ heading: string; detail: string } | null>(null)
 
   useEffect(() => {
-    const hash = window.location.hash.slice(1)
-
-    if (hash) {
-      const params = new URLSearchParams(hash)
+    const processParams = (params: URLSearchParams) => {
       const sessionToken = params.get('session_token')
       const error = params.get('auth_error')
       const errorCode = params.get('auth_error_code')
       const state = params.get('state')
       const savedState = sessionStorage.getItem('github_oauth_state')
 
-      window.history.replaceState(null, '', window.location.pathname)
-
       if (error) {
         setAuthError(getFriendlyError(error, errorCode))
         setIsAuthenticated(false)
-        return
+        return true
       }
 
       if (sessionToken && state && state === savedState) {
@@ -63,14 +59,14 @@ function App() {
             setCachedUser(JSON.parse(userRaw))
             sessionStorage.removeItem('github_oauth_state')
             setIsAuthenticated(true)
-            return
+            return true
           } catch {
             setAuthError({
               heading: "Sign-in failed.",
               detail: "Could not save your session. Please check your browser settings and try again.",
             })
             setIsAuthenticated(false)
-            return
+            return true
           }
         }
       } else if (sessionToken) {
@@ -79,12 +75,28 @@ function App() {
           detail: "The session state did not match. Please try signing in again.",
         })
         setIsAuthenticated(false)
-        return
+        return true
       }
+
+      return false
+    }
+
+    const hash = window.location.hash.slice(1)
+    if (hash) {
+      const params = new URLSearchParams(hash)
+      window.history.replaceState(null, '', window.location.pathname)
+      if (processParams(params)) return
     }
 
     const token = getSessionToken()
     setIsAuthenticated(!!token)
+
+    if (shouldUseNativeAuth()) {
+      const cleanup = listenForAuthCallback((params) => {
+        processParams(params)
+      })
+      return cleanup
+    }
   }, [])
 
   if (isAuthenticated === null) {

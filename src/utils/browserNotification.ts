@@ -1,4 +1,7 @@
+import { isNativeApp } from './platform'
+
 export function requestNotificationPermission(): void {
+  if (isNativeApp()) return
   if (!('Notification' in window)) return
   if (Notification.permission === 'default') {
     Notification.requestPermission().catch(() => {})
@@ -12,6 +15,7 @@ export function sendBrowserNotification(
   tag?: string,
   silent?: boolean
 ): void {
+  if (isNativeApp()) return
   if (!('Notification' in window)) return
   if (Notification.permission !== 'granted') return
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
+import { App } from '@capacitor/app'
 import { apiGet } from '../utils/api'
+import { isNativeApp } from '../utils/platform'
 
 interface PollResult {
   changed: boolean
@@ -86,12 +88,33 @@ export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollin
 
     document.addEventListener('visibilitychange', handleVisibility)
 
+    let removeNativeListener: (() => void) | null = null
+    if (isNativeApp()) {
+      const listenerPromise = App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          pausedRef.current = false
+          poll()
+          startInterval()
+        } else {
+          pausedRef.current = true
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current)
+            intervalRef.current = null
+          }
+        }
+      })
+      removeNativeListener = () => {
+        listenerPromise.then(h => h.remove())
+      }
+    }
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
         intervalRef.current = null
       }
       document.removeEventListener('visibilitychange', handleVisibility)
+      if (removeNativeListener) removeNativeListener()
     }
   }, [enabled, poll])
 
