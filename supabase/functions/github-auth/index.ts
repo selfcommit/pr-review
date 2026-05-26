@@ -14,7 +14,18 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
+function isCustomScheme(url: string): boolean {
+  return !url.startsWith("http://") && !url.startsWith("https://");
+}
+
 function redirectResponse(url: string) {
+  if (isCustomScheme(url)) {
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Redirecting...</title></head><body><script>window.location.href=${JSON.stringify(url)};</script><noscript><a href="${url.replace(/"/g, "&quot;")}">Tap here to continue</a></noscript></body></html>`;
+    return new Response(html, {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" },
+    });
+  }
   return new Response(null, {
     status: 302,
     headers: { ...corsHeaders, Location: url },
