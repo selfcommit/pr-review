@@ -1511,6 +1511,80 @@ async function fetchTeamApprovalStatus(
   return result;
 }
 
+async function fetchUserAlreadyReviewedIds(
+  accessToken: string,
+  items: GitHubSearchItem[],
+  userLogin: string
+): Promise<Set<number>> {
+  const alreadyReviewed = new Set<number>();
+  if (items.length === 0) return alreadyReviewed;
+
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    const batch = items.slice(i, i + BATCH_SIZE);
+
+    const prFragment = `
+      latestReviews(first: 50) {
+        nodes {
+          author { login }
+          state
+        }
+      }
+    `;
+
+    const aliases = batch.map((item, idx) => {
+      const repoFullName = item.repository_url.split("/").slice(-2).join("/");
+      const [owner, repo] = repoFullName.split("/");
+      return `pr${idx}: repository(owner: "${owner}", name: "${repo}") { pullRequest(number: ${item.number}) { ${prFragment} } }`;
+    });
+
+    const query = `query { ${aliases.join(" ")} }`;
+
+    try {
+      const resp = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/vnd.github.v3+json",
+        },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!resp.ok) {
+        console.error("[fetchUserAlreadyReviewedIds] graphql failed", resp.status);
+        continue;
+      }
+
+      const data = await resp.json();
+      if (!data?.data) continue;
+
+      batch.forEach((item, idx) => {
+        const node = data.data[`pr${idx}`];
+        const pr = node?.pullRequest;
+        if (!pr) return;
+
+        const loginLower = userLogin.toLowerCase();
+        const userReview = (pr.latestReviews?.nodes || []).find(
+          (review: { author?: { login?: string }; state?: string }) =>
+            review.author?.login?.toLowerCase() === loginLower
+        );
+
+        if (
+          userReview &&
+          (userReview.state === "APPROVED" || userReview.state === "CHANGES_REQUESTED")
+        ) {
+          alreadyReviewed.add(item.id);
+        }
+      });
+    } catch (err) {
+      console.error("[fetchUserAlreadyReviewedIds] error", err);
+    }
+  }
+
+  return alreadyReviewed;
+}
+
 interface GitHubReview {
   id: number;
   user?: { id: number; login: string } | null;
@@ -2895,6 +2969,33 @@ Deno.serve(async (req: Request) => {
             .update({ last_comment_check_at: new Date(nowMs).toISOString() })
             .eq("github_user_id", user.github_user_id)
             .in("pr_id", checkedIds);
+        }
+      }
+
+      // Check if user already reviewed PRs still showing in search (index lag)
+      const existingFreshItems = freshItems.filter(
+        (i) => snapMap.has(i.id) && !newItems.some((n) => n.id === i.id)
+      );
+      if (existingFreshItems.length > 0) {
+        const alreadyReviewedIds = await fetchUserAlreadyReviewedIds(
+          user.access_token,
+          existingFreshItems,
+          user.login
+        );
+        if (alreadyReviewedIds.size > 0) {
+          for (const id of alreadyReviewedIds) {
+            removedPrIds.push(id);
+            snapMap.delete(id);
+          }
+          await supabase
+            .from("user_pr_snapshots")
+            .delete()
+            .eq("github_user_id", user.github_user_id)
+            .in("pr_id", Array.from(alreadyReviewedIds));
+
+          freshItems = freshItems.filter((i) => !alreadyReviewedIds.has(i.id));
+          updatedItems = updatedItems.filter((i) => !alreadyReviewedIds.has(i.id));
+          freshIdSet = new Set(freshItems.map((i) => i.id));
         }
       }
 
