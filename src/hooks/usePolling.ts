@@ -26,6 +26,8 @@ export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollin
   const onChangesRef = useRef(onChanges)
   onChangesRef.current = onChanges
 
+  const startIntervalRef = useRef<(() => void) | null>(null)
+
   const poll = useCallback(async () => {
     if (pausedRef.current) return
     try {
@@ -43,10 +45,14 @@ export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollin
           }
           return
         }
+        const prevInterval = effectiveIntervalRef.current
         if (remaining < 100) {
           effectiveIntervalRef.current = intervalMs * 2
         } else {
           effectiveIntervalRef.current = intervalMs
+        }
+        if (effectiveIntervalRef.current !== prevInterval && startIntervalRef.current) {
+          startIntervalRef.current()
         }
       }
 
@@ -77,6 +83,7 @@ export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollin
       }, effectiveIntervalRef.current)
     }
 
+    startIntervalRef.current = startInterval
     startInterval()
 
     const handleVisibility = () => {
@@ -113,6 +120,7 @@ export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollin
         clearInterval(intervalRef.current)
         intervalRef.current = null
       }
+      startIntervalRef.current = null
       document.removeEventListener('visibilitychange', handleVisibility)
       if (removeNativeListener) removeNativeListener()
     }

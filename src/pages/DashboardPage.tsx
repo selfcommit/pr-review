@@ -200,7 +200,7 @@ function DashboardPage() {
     }
   }, [triggerHighlight, scrollToPR, reportAudioUnlocked])
 
-  const pollingEnabled = !loading && !error && activeTab === 'pull-requests' && prSubTab === 'review-requested' && !!getSessionToken()
+  const pollingEnabled = !loading && !error && !!getSessionToken()
 
   const { pause: pausePolling, resume: resumePolling } = usePolling({
     enabled: pollingEnabled,
@@ -270,21 +270,28 @@ function DashboardPage() {
         removeGestureListeners()
         return
       }
-      if (soundEnabledRef.current) {
-        unlockAudio()
-        primeAudio().then(ok => {
-          if (ok) {
-            reportAudioUnlocked()
-            removeGestureListeners()
-          }
-        })
-      }
+      unlockAudio()
+      primeAudio().then(ok => {
+        if (ok) {
+          reportAudioUnlocked()
+          removeGestureListeners()
+        }
+      })
     }
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && soundEnabledRef.current) {
+      if (document.visibilityState === 'visible') {
         unlockAudio()
-        if (isAudioUnlocked()) reportAudioUnlocked()
+        if (!isPrimed()) {
+          primeAudio().then(ok => {
+            if (ok) {
+              reportAudioUnlocked()
+              removeGestureListeners()
+            }
+          })
+        } else if (isAudioUnlocked()) {
+          reportAudioUnlocked()
+        }
       }
     }
 
@@ -297,8 +304,14 @@ function DashboardPage() {
     if (getSessionToken()) {
       apiGet<{ audio_unlocked: boolean }>('audio-state')
         .then(state => {
-          if (state?.audio_unlocked && soundEnabledRef.current) {
+          if (state?.audio_unlocked) {
             unlockAudio()
+            primeAudio().then(ok => {
+              if (ok) {
+                reportAudioUnlocked()
+                removeGestureListeners()
+              }
+            })
           }
         })
         .catch(() => {})
