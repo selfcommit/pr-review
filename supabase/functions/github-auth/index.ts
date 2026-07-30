@@ -1888,6 +1888,44 @@ async function assembleStats(
     (a, b) => b.total_reviews + b.declined - (a.total_reviews + a.declined)
   );
 
+  // Compute repo-wide P90 across ALL users for comparison
+  const repoNames = perRepo.map((r) => r.repo);
+  let repoWideP90Map = new Map<string, { p90: number | null; sampleSize: number }>();
+  if (repoNames.length > 0) {
+    const { data: allRepoReviews } = await supabase
+      .from("pr_reviews")
+      .select("repo_full_name, latency_seconds, review_state")
+      .in("repo_full_name", repoNames)
+      .gte("submitted_at", windowStartIso)
+      .in("review_state", ["approved", "changes_requested"]);
+
+    const repoLatencies = new Map<string, number[]>();
+    for (const r of allRepoReviews || []) {
+      const repo = r.repo_full_name as string;
+      const lat = r.latency_seconds as number | null;
+      if (lat != null && lat >= 0) {
+        let arr = repoLatencies.get(repo);
+        if (!arr) {
+          arr = [];
+          repoLatencies.set(repo, arr);
+        }
+        arr.push(lat);
+      }
+    }
+    for (const [repo, lats] of repoLatencies) {
+      repoWideP90Map.set(repo, {
+        p90: percentile(lats, 90),
+        sampleSize: lats.length,
+      });
+    }
+  }
+
+  for (const repo of perRepo) {
+    const wide = repoWideP90Map.get(repo.repo);
+    (repo as Record<string, unknown>).repo_p90_latency_seconds = wide?.p90 ?? null;
+    (repo as Record<string, unknown>).repo_latency_sample_size = wide?.sampleSize ?? 0;
+  }
+
   const allGlobalPrs = perRepo.flatMap((r) => [...r.prs, ...r.excluded_prs]);
   const allGlobalTimed = allGlobalPrs.filter(
     (p) => p.latency_seconds !== null

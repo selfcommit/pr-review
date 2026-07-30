@@ -61,6 +61,8 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           latency_sample_size: repo.latency_sample_size,
         }}
         includedPrs={repo.prs || []}
+        repoP90LatencySeconds={repo.repo_p90_latency_seconds}
+        repoLatencySampleSize={repo.repo_latency_sample_size}
       />
     </div>
   )

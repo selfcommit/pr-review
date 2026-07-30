@@ -60,21 +60,37 @@ export function StatRow({
   summary,
   sampleLabel,
   includedPrs,
+  repoP90LatencySeconds,
+  repoLatencySampleSize,
 }: {
   summary: StatsSummary
   sampleLabel?: string
   includedPrs: { latency_seconds: number | null }[]
+  repoP90LatencySeconds?: number | null
+  repoLatencySampleSize?: number
 }) {
   const total = summary.total_reviews
   const timedPrs = includedPrs.filter((p): p is { latency_seconds: number } => p.latency_seconds !== null)
   const onTargetCount = timedPrs.filter(p => p.latency_seconds <= ON_TARGET_SECONDS).length
   const hasTimed = timedPrs.length > 0
 
-  const p90Sublabel = hasTimed ? (
-    <span className="stat-card-sublabel-accent">
-      {formatPercent(onTargetCount, timedPrs.length)} of your reviews took less than 24 hours
+  const repoP90Line = repoP90LatencySeconds != null && (repoLatencySampleSize ?? 0) > 0 ? (
+    <span className="stat-card-sublabel-repo-p90">
+      Repo P90: {formatLatency(repoP90LatencySeconds)}
+      <span className="stat-card-sublabel-muted"> ({repoLatencySampleSize} reviews)</span>
     </span>
   ) : null
+
+  const p90Sublabel = (
+    <>
+      {hasTimed && (
+        <span className="stat-card-sublabel-accent">
+          {formatPercent(onTargetCount, timedPrs.length)} of your reviews took less than 24 hours
+        </span>
+      )}
+      {repoP90Line}
+    </>
+  )
 
   return (
     <div className="stats-row">
@@ -258,6 +274,8 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           latency_sample_size: repo.latency_sample_size,
         }}
         includedPrs={repo.prs || []}
+        repoP90LatencySeconds={repo.repo_p90_latency_seconds}
+        repoLatencySampleSize={repo.repo_latency_sample_size}
       />
 
       <PrDrawer

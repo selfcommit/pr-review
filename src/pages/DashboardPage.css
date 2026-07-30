@@ -1531,6 +1531,19 @@
   font-weight: 600;
 }
 
+.stat-card-sublabel-repo-p90 {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.stat-card-sublabel-muted {
+  color: #475569;
+  font-weight: 400;
+}
+
 .repo-stats-list {
   display: flex;
   flex-direction: column;
