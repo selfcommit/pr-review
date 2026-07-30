@@ -69,7 +69,7 @@ export function StatRow({
   repoP90LatencySeconds?: number | null
   repoLatencySampleSize?: number
 }) {
-  const total = summary.approved + summary.changes_requested + summary.declined
+  const total = summary.total_reviews
   const timedPrs = includedPrs.filter((p): p is { latency_seconds: number } => p.latency_seconds !== null)
   const onTargetCount = timedPrs.filter(p => p.latency_seconds <= ON_TARGET_SECONDS).length
   const hasTimed = timedPrs.length > 0
@@ -112,7 +112,7 @@ export function StatRow({
         label="Declined"
         value={summary.declined}
         tone="slate"
-        sublabel={total > 0 ? `${formatPercent(summary.declined, total)} of total` : undefined}
+        sublabel={<span style={{ display: 'inline' }}>Comment <RunnerIcon /> to decline</span>}
         icon={<RunnerIcon />}
       />
       <StatCard
