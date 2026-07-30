@@ -1331,6 +1331,48 @@ async function syncSnapshots(
   }
 }
 
+async function fetchUserReviewStates(
+  accessToken: string,
+  items: { id: number; number: number; repoFullName: string }[],
+  userLogin: string
+): Promise<Record<number, string>> {
+  const result: Record<number, string> = {};
+  if (items.length === 0) return result;
+
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    Accept: "application/vnd.github.v3+json",
+  };
+
+  await Promise.all(
+    items.map(async (item) => {
+      try {
+        const resp = await fetch(
+          `https://api.github.com/repos/${item.repoFullName}/pulls/${item.number}/reviews`,
+          { headers }
+        );
+        if (!resp.ok) return;
+        const reviews = await resp.json();
+        if (!Array.isArray(reviews)) return;
+        for (let i = reviews.length - 1; i >= 0; i--) {
+          const r = reviews[i];
+          if (
+            r.user?.login?.toLowerCase() === userLogin.toLowerCase() &&
+            (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED" || r.state === "COMMENTED")
+          ) {
+            result[item.id] = r.state.toLowerCase();
+            break;
+          }
+        }
+      } catch {
+        // ignore individual failures
+      }
+    })
+  );
+
+  return result;
+}
+
 function snapshotChanged(snap: SnapshotRow, item: GitHubSearchItem): boolean {
   const fields = extractSnapshotFields(item);
   return (
@@ -2709,12 +2751,14 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    if (path === "poll-reviews") {
+    if (path === "poll-reviews" || path.startsWith("poll-reviews?")) {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
         return jsonResponse({ error: "Missing session token" }, 401);
       }
 
+      const pollUrl = new URL(req.url);
+      const checkAllReviews = pollUrl.searchParams.get("check_all") === "true";
       const sessionToken = authHeader.replace("Bearer ", "");
       const supabase = getSupabaseAdmin();
 
@@ -2936,6 +2980,49 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // Check if user already submitted a review on PRs still in the search results.
+      // On every poll: check updatedItems (PR's updated_at changed — most likely candidate).
+      // On full check cycles (every ~30s): check ALL visible PRs to catch stale search index.
+      const removalReasons: Record<number, string> = {};
+      const candidateSource = checkAllReviews ? freshItems : updatedItems;
+      const reviewCheckCandidates = candidateSource
+        .map((item) => ({
+          id: item.id,
+          number: item.number,
+          repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+        }))
+        .slice(0, 20);
+
+      if (reviewCheckCandidates.length > 0) {
+        const reviewStates = await fetchUserReviewStates(
+          user.access_token,
+          reviewCheckCandidates,
+          user.login
+        );
+
+        const reviewedIds = new Set<number>();
+        for (const [prId, state] of Object.entries(reviewStates)) {
+          const id = Number(prId);
+          reviewedIds.add(id);
+          removedPrIds.push(id);
+          removalReasons[id] = state;
+        }
+
+        if (reviewedIds.size > 0) {
+          freshItems = freshItems.filter((i) => !reviewedIds.has(i.id));
+          updatedItems = updatedItems.filter((i) => !reviewedIds.has(i.id));
+          freshIdSet = new Set(freshItems.map((i) => i.id));
+
+          await supabase
+            .from("user_pr_snapshots")
+            .delete()
+            .eq("github_user_id", user.github_user_id)
+            .in("pr_id", Array.from(reviewedIds));
+
+          for (const id of reviewedIds) snapMap.delete(id);
+        }
+      }
+
       const changed =
         updatedItems.length > 0 ||
         newItems.length > 0 ||
@@ -2999,6 +3086,7 @@ Deno.serve(async (req: Request) => {
         changed,
         updatedPRs: updatedItems,
         removedPRIds: removedPrIds,
+        removalReasons,
         newPRs: newItems,
         reviewTimestamps: newReviewTimestamps,
         rateLimitRemaining,

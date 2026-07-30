@@ -7,6 +7,7 @@ interface PollResult {
   changed: boolean
   updatedPRs: Array<Record<string, unknown>>
   removedPRIds: number[]
+  removalReasons: Record<number, string>
   newPRs: Array<Record<string, unknown>>
   reviewTimestamps: Record<number, string>
   rateLimitRemaining: string | null
@@ -16,22 +17,27 @@ interface PollResult {
 interface UsePollingOptions {
   enabled: boolean
   intervalMs?: number
+  fullCheckEveryN?: number
   onChanges: (result: PollResult) => void | Promise<void>
 }
 
-export function usePolling({ enabled, intervalMs = 60000, onChanges }: UsePollingOptions) {
+export function usePolling({ enabled, intervalMs = 60000, fullCheckEveryN = 6, onChanges }: UsePollingOptions) {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pausedRef = useRef(false)
   const effectiveIntervalRef = useRef(intervalMs)
   const onChangesRef = useRef(onChanges)
   onChangesRef.current = onChanges
+  const pollCountRef = useRef(0)
 
   const startIntervalRef = useRef<(() => void) | null>(null)
 
   const poll = useCallback(async () => {
     if (pausedRef.current) return
     try {
-      const result = await apiGet<PollResult>('poll-reviews')
+      pollCountRef.current += 1
+      const doFullCheck = pollCountRef.current % fullCheckEveryN === 0
+      const endpoint = doFullCheck ? 'poll-reviews?check_all=true' : 'poll-reviews'
+      const result = await apiGet<PollResult>(endpoint)
 
       if (result.rateLimitRemaining) {
         const remaining = parseInt(result.rateLimitRemaining, 10)

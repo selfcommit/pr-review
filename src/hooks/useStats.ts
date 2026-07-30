@@ -32,6 +32,22 @@ function broadcast() {
   for (const l of listeners) l(current)
 }
 
+export function incrementStat(field: 'approved' | 'changes_requested' | 'commented', count = 1) {
+  if (!current) return
+  const next: StatsResponse = {
+    ...current,
+    summary: {
+      ...current.summary,
+      total_reviews: current.summary.total_reviews + count,
+      [field]: current.summary[field] + count,
+    },
+    repos: current.repos,
+  }
+  current = next
+  writeCache(next)
+  broadcast()
+}
+
 async function fetchStats(force = false): Promise<StatsResponse> {
   if (inFlight) return inFlight
   const path = force ? 'stats?force=true' : 'stats'

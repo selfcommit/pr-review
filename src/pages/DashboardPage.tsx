@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrgAccess } from '../hooks/useOrgAccess'
 import { usePolling } from '../hooks/usePolling'
+import { incrementStat } from '../hooks/useStats'
 import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
@@ -118,6 +119,7 @@ function DashboardPage() {
   const handlePollChanges = useCallback(async (result: {
     updatedPRs: Array<Record<string, unknown>>
     removedPRIds: number[]
+    removalReasons?: Record<number, string>
     newPRs: Array<Record<string, unknown>>
     reviewTimestamps: Record<number, string>
   }) => {
@@ -172,6 +174,18 @@ function DashboardPage() {
       setReviewRequestedItems(prev =>
         prev.filter(item => !removedSet.has(item.id as number))
       )
+
+      if (result.removalReasons) {
+        const counts: Record<string, number> = {}
+        for (const state of Object.values(result.removalReasons)) {
+          counts[state] = (counts[state] || 0) + 1
+        }
+        for (const [state, count] of Object.entries(counts)) {
+          if (state === 'approved' || state === 'changes_requested' || state === 'commented') {
+            incrementStat(state, count)
+          }
+        }
+      }
     }
 
     if (Object.keys(result.reviewTimestamps).length > 0) {

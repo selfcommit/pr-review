@@ -41,6 +41,18 @@ function groupByUrgency(prs: PullRequest[]): UrgencyGroup[] {
   return groups
 }
 
+function capGroups(groups: UrgencyGroup[], max: number): UrgencyGroup[] {
+  const result: UrgencyGroup[] = []
+  let remaining = max
+  for (const group of groups) {
+    if (remaining <= 0) break
+    const capped = group.prs.slice(0, remaining)
+    result.push({ label: group.label, prs: capped })
+    remaining -= capped.length
+  }
+  return result
+}
+
 interface ReviewRequestedTabProps {
   reviewRequestedItems: Array<Record<string, unknown>>
   reviewTimestamps: Record<number, string>
@@ -99,7 +111,9 @@ function ReviewRequestedTab({
     : afterDraftFilter.filter(pr => pr.team_approval_required !== false)
 
   const urgencyGroups = groupByUrgency(reviewPRs)
-  const overdueCount = urgencyGroups.find(g => g.label === 'overdue')?.prs.length || 0
+  const MAX_VISIBLE = 20
+  const cappedGroups = capGroups(urgencyGroups, MAX_VISIBLE)
+  const overdueCount = cappedGroups.find(g => g.label === 'overdue')?.prs.length || 0
 
   return (
     <>
@@ -164,7 +178,7 @@ function ReviewRequestedTab({
           </div>
       ) : (
         <div className="urgency-container">
-          {urgencyGroups.map(group => (
+          {cappedGroups.map(group => (
             <div
               key={group.label}
               className={`urgency-section ${group.label === 'overdue' ? 'urgency-section-overdue' : 'urgency-section-recent'}`}
