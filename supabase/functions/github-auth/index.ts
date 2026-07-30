@@ -3011,6 +3011,7 @@ Deno.serve(async (req: Request) => {
         if (reviewedIds.size > 0) {
           freshItems = freshItems.filter((i) => !reviewedIds.has(i.id));
           updatedItems = updatedItems.filter((i) => !reviewedIds.has(i.id));
+          newItems = newItems.filter((i) => !reviewedIds.has(i.id));
           freshIdSet = new Set(freshItems.map((i) => i.id));
 
           await supabase

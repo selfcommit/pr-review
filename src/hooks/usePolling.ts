@@ -62,7 +62,7 @@ export function usePolling({ enabled, intervalMs = 60000, fullCheckEveryN = 6, o
         }
       }
 
-      if (result.changed) {
+      if (result.changed || (result.removedPRIds && result.removedPRIds.length > 0)) {
         onChangesRef.current(result)
       }
     } catch {

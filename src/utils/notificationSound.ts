@@ -268,3 +268,27 @@ export function isBufferReady(): boolean {
 export function isBufferLoading(): boolean {
   return bufferLoading
 }
+
+export function playRemovalTone(): boolean {
+  const ctx = ensureAudioContext()
+  if (!ctx || ctx.state !== 'running') return false
+  try {
+    const now = ctx.currentTime
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(880, now)
+    osc.frequency.exponentialRampToValueAtTime(440, now + 0.15)
+
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.3, now)
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25)
+
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(now)
+    osc.stop(now + 0.25)
+    return true
+  } catch {
+    return false
+  }
+}

@@ -8,7 +8,7 @@ import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost,
 import { isInIframe } from '../utils/iframe'
 import { shouldUseNativeAuth, getNativeRedirectUrl, openNativeOAuth } from '../utils/nativeAuth'
 import { isOverdue } from '../utils/time'
-import { playChime, unlockAudio, isAudioUnlocked, preWarmAudio, primeAudio, isPrimed, stopKeepalive } from '../utils/notificationSound'
+import { playChime, playRemovalTone, unlockAudio, isAudioUnlocked, preWarmAudio, primeAudio, isPrimed, stopKeepalive } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
 import { mapItem } from '../types/pullRequest'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -174,6 +174,10 @@ function DashboardPage() {
       setReviewRequestedItems(prev =>
         prev.filter(item => !removedSet.has(item.id as number))
       )
+
+      if (soundEnabledRef.current) {
+        playRemovalTone()
+      }
 
       if (result.removalReasons) {
         const counts: Record<string, number> = {}
