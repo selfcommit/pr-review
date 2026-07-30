@@ -474,6 +474,19 @@ function DashboardPage() {
     setToastMessages(null)
   }, [])
 
+  const handleTestNotification = useCallback(async () => {
+    let chimeSucceeded = false
+    if (soundEnabledRef.current) {
+      chimeSucceeded = await playChime()
+      if (chimeSucceeded) reportAudioUnlocked()
+    }
+    const silent = soundEnabledRef.current ? chimeSucceeded : true
+    const title = 'Test review request'
+    const body = 'octocat/hello-world#99 - Fix the widget'
+    sendBrowserNotification(title, body, undefined, 'test-notification', silent)
+    setToastMessages([{ prId: -1, text: 'octocat/hello-world#99 - Fix the widget' }])
+  }, [reportAudioUnlocked])
+
   const totalReviewRequested = reviewRequestedItems.length
   return (
     <div className="dashboard-container">
@@ -515,13 +528,25 @@ function DashboardPage() {
               </div>
             )}
             {user?.is_admin && (
-              <button
-                onClick={() => navigate('/admin/users')}
-                className="signout-button"
-                title="Admin"
-              >
-                Admin
-              </button>
+              <>
+                <button
+                  onClick={handleTestNotification}
+                  className="signout-button"
+                  title="Test notification"
+                  style={{ display: 'inline-flex', alignItems: 'center', padding: '4px 8px' }}
+                >
+                  <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16">
+                    <path d="M8 16a2 2 0 0 0 1.985-1.75H6.015A2 2 0 0 0 8 16ZM8 1.5A3.5 3.5 0 0 0 4.5 5c0 .655-.108 1.708-.434 2.758-.324 1.047-.795 2.052-1.566 2.742H13.5c-.771-.69-1.242-1.695-1.566-2.742C11.608 6.708 11.5 5.655 11.5 5A3.5 3.5 0 0 0 8 1.5Z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => navigate('/admin/users')}
+                  className="signout-button"
+                  title="Admin"
+                >
+                  Admin
+                </button>
+              </>
             )}
             <button onClick={handleSignOut} className="signout-button">
               Sign Out
