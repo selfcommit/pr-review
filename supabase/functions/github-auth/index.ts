@@ -2815,16 +2815,27 @@ Deno.serve(async (req: Request) => {
         ? searchResult.items
         : [];
 
-      const { data: declinedRows } = await supabase
-        .from("pr_declines")
-        .select("pr_id")
-        .eq("github_user_id", user.github_user_id);
+      const [{ data: declinedRows }, { data: reviewedRows }] = await Promise.all([
+        supabase
+          .from("pr_declines")
+          .select("pr_id")
+          .eq("github_user_id", user.github_user_id),
+        supabase
+          .from("poll_reviewed_prs")
+          .select("pr_id")
+          .eq("github_user_id", user.github_user_id),
+      ]);
 
       const declinedIds = new Set<number>(
         (declinedRows || []).map((r: { pr_id: number }) => r.pr_id)
       );
+      const alreadyReviewedIds = new Set<number>(
+        (reviewedRows || []).map((r: { pr_id: number }) => r.pr_id)
+      );
 
-      let freshItems = rawFreshItems.filter((i) => !declinedIds.has(i.id));
+      let freshItems = rawFreshItems.filter(
+        (i) => !declinedIds.has(i.id) && !alreadyReviewedIds.has(i.id)
+      );
 
       const pollUniqueRepos = [
         ...new Set(freshItems.map((i) => i.repository_url.split("/").slice(-2).join("/")))
@@ -2975,11 +2986,10 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Check if user already submitted a review on PRs still in the search results.
-      // On every poll: check updatedItems (PR's updated_at changed — most likely candidate).
-      // On full check cycles (every ~30s): check ALL visible PRs to catch stale search index.
       const removalReasons: Record<number, string> = {};
-      const candidateSource = checkAllReviews ? freshItems : updatedItems;
+      const candidateSource = checkAllReviews
+        ? freshItems
+        : [...newItems, ...updatedItems];
       const reviewCheckCandidates = candidateSource
         .map((item) => ({
           id: item.id,
@@ -3009,11 +3019,21 @@ Deno.serve(async (req: Request) => {
           newItems = newItems.filter((i) => !reviewedIds.has(i.id));
           freshIdSet = new Set(freshItems.map((i) => i.id));
 
-          await supabase
-            .from("user_pr_snapshots")
-            .delete()
-            .eq("github_user_id", user.github_user_id)
-            .in("pr_id", Array.from(reviewedIds));
+          await Promise.all([
+            supabase
+              .from("user_pr_snapshots")
+              .delete()
+              .eq("github_user_id", user.github_user_id)
+              .in("pr_id", Array.from(reviewedIds)),
+            supabase.from("poll_reviewed_prs").upsert(
+              Array.from(reviewedIds).map((id) => ({
+                github_user_id: user.github_user_id,
+                pr_id: id,
+                review_state: removalReasons[id] || "",
+              })),
+              { onConflict: "github_user_id,pr_id" }
+            ),
+          ]);
 
           for (const id of reviewedIds) snapMap.delete(id);
         }
@@ -3056,6 +3076,20 @@ Deno.serve(async (req: Request) => {
 
       if (changed) {
         await syncSnapshots(supabase, user.github_user_id, freshItems);
+      }
+
+      if (alreadyReviewedIds.size > 0) {
+        const rawFreshIdSet = new Set(rawFreshItems.map((i) => i.id));
+        const expiredReviewedIds = Array.from(alreadyReviewedIds).filter(
+          (id) => !rawFreshIdSet.has(id)
+        );
+        if (expiredReviewedIds.length > 0) {
+          await supabase
+            .from("poll_reviewed_prs")
+            .delete()
+            .eq("github_user_id", user.github_user_id)
+            .in("pr_id", expiredReviewedIds);
+        }
       }
 
       const itemsNeedingApproval = [...newItems, ...updatedItems];
