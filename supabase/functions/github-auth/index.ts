@@ -1511,11 +1511,6 @@ async function fetchTeamApprovalStatus(
         return;
       }
 
-      if (individuallyRequested) {
-        result[item.id] = { team_approval_required: true };
-        return;
-      }
-
       if (relevantTeams.size === 0) {
         result[item.id] = { team_approval_required: true };
         return;
