@@ -63,7 +63,11 @@ export function usePolling({ enabled, intervalMs = 60000, fullCheckEveryN = 6, o
       }
 
       if (result.changed || (result.removedPRIds && result.removedPRIds.length > 0)) {
-        onChangesRef.current(result)
+        try {
+          await onChangesRef.current(result)
+        } catch (err) {
+          console.error('[usePolling] onChanges handler threw:', err)
+        }
       }
     } catch {
       // silently ignore poll failures

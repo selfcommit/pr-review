@@ -197,24 +197,37 @@ function DashboardPage() {
     }
 
     if (notifyPrIds.length > 0) {
-      let chimeSucceeded = false
-      if (soundEnabledRef.current) {
-        chimeSucceeded = await playChime()
-        if (chimeSucceeded) reportAudioUnlocked()
-      }
-      const silent = soundEnabledRef.current ? chimeSucceeded : true
+      console.log('[notify] new-PR notification path entered, prIds:', notifyPrIds, 'messages:', messages.length)
+
       const title = messages.length === 1
         ? 'New review request'
         : `${messages.length} review requests need attention`
       const body = messages[0].text + (messages.length > 1 ? ` +${messages.length - 1} more` : '')
       const firstPrId = notifyPrIds[0]
-      sendBrowserNotification(title, body, () => {
-        triggerHighlight([firstPrId])
-        scrollToPR(firstPrId)
-      }, `review-request-${firstPrId}`, silent)
+
       triggerHighlight(notifyPrIds)
       setToastMessages(messages)
       setTimeout(() => scrollToPR(notifyPrIds[0]), 100)
+
+      let chimeSucceeded = false
+      try {
+        if (soundEnabledRef.current) {
+          chimeSucceeded = await playChime()
+          if (chimeSucceeded) reportAudioUnlocked()
+        }
+      } catch (err) {
+        console.error('[notify] playChime threw:', err)
+      }
+
+      const silent = soundEnabledRef.current ? chimeSucceeded : true
+      try {
+        sendBrowserNotification(title, body, () => {
+          triggerHighlight([firstPrId])
+          scrollToPR(firstPrId)
+        }, `review-request-${firstPrId}`, silent)
+      } catch (err) {
+        console.error('[notify] sendBrowserNotification threw:', err)
+      }
     }
   }, [triggerHighlight, scrollToPR, reportAudioUnlocked])
 
