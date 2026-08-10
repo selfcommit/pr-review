@@ -1535,7 +1535,7 @@ async function fetchTeamApprovalStatus(
 
       let anyUnapproved = false;
       for (const teamKey of relevantTeams) {
-        if (!approvedTeamKeys.has(teamKey)) {
+        if (!approvedTeamKeys.has(teamKey) && pendingTeamKeys.has(teamKey)) {
           anyUnapproved = true;
           break;
         }
