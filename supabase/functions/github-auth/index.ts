@@ -1331,44 +1331,116 @@ async function syncSnapshots(
   }
 }
 
-async function fetchUserReviewStates(
+interface ReviewedState {
+  reviewed: boolean;
+  state: string;
+}
+
+// For each PR, decide whether the user has already handled the current review
+// request. A card counts as "reviewed" only when the user's most recent
+// submitted review is at least as recent as the most recent time a review was
+// requested from them (directly or through one of their teams). If a later
+// re-request arrives, the review is stale and the card should come back.
+async function resolveReviewedStates(
   accessToken: string,
   items: { id: number; number: number; repoFullName: string }[],
-  userLogin: string
-): Promise<Record<number, string>> {
-  const result: Record<number, string> = {};
+  userLogin: string,
+  userTeamKeys: Set<string>
+): Promise<Record<number, ReviewedState>> {
+  const result: Record<number, ReviewedState> = {};
   if (items.length === 0) return result;
 
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    Accept: "application/vnd.github.v3+json",
-  };
-
-  await Promise.all(
-    items.map(async (item) => {
-      try {
-        const resp = await fetch(
-          `https://api.github.com/repos/${item.repoFullName}/pulls/${item.number}/reviews`,
-          { headers }
-        );
-        if (!resp.ok) return;
-        const reviews = await resp.json();
-        if (!Array.isArray(reviews)) return;
-        for (let i = reviews.length - 1; i >= 0; i--) {
-          const r = reviews[i];
-          if (
-            r.user?.login?.toLowerCase() === userLogin.toLowerCase() &&
-            (r.state === "APPROVED" || r.state === "CHANGES_REQUESTED" || r.state === "COMMENTED")
-          ) {
-            result[item.id] = r.state.toLowerCase();
-            break;
+  const prFragment = `
+    reviews(first: 100) {
+      nodes { author { login } state submittedAt }
+    }
+    timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 50) {
+      nodes {
+        ... on ReviewRequestedEvent {
+          createdAt
+          requestedReviewer {
+            __typename
+            ... on User { login }
+            ... on Team { slug organization { login } }
           }
         }
-      } catch {
-        // ignore individual failures
       }
-    })
-  );
+    }
+  `;
+
+  const aliases = items.map((item, idx) => {
+    const [owner, repo] = item.repoFullName.split("/");
+    return `pr${idx}: repository(owner: "${owner}", name: "${repo}") { pullRequest(number: ${item.number}) { id ${prFragment} } }`;
+  });
+
+  const query = `query { ${aliases.join(" ")} }`;
+
+  try {
+    const resp = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/vnd.github.v3+json",
+      },
+      body: JSON.stringify({ query }),
+    });
+
+    if (!resp.ok) {
+      console.error("[resolveReviewedStates] graphql failed", resp.status);
+      return result;
+    }
+
+    const data = await resp.json();
+    if (!data || !data.data) return result;
+
+    const loginLower = userLogin.toLowerCase();
+    const HANDLED = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED"]);
+
+    items.forEach((item, idx) => {
+      const pr = data.data[`pr${idx}`]?.pullRequest;
+      if (!pr) return;
+
+      let latestReviewAt: number | null = null;
+      let latestState = "";
+      for (const review of pr.reviews?.nodes || []) {
+        if (review?.author?.login?.toLowerCase() !== loginLower) continue;
+        if (!review.submittedAt || !HANDLED.has(review.state)) continue;
+        const ts = new Date(review.submittedAt).getTime();
+        if (latestReviewAt === null || ts >= latestReviewAt) {
+          latestReviewAt = ts;
+          latestState = String(review.state).toLowerCase();
+        }
+      }
+
+      if (latestReviewAt === null) {
+        result[item.id] = { reviewed: false, state: "" };
+        return;
+      }
+
+      let latestRequestAt: number | null = null;
+      for (const ev of pr.timelineItems?.nodes || []) {
+        const rev = ev?.requestedReviewer;
+        if (!rev || !ev.createdAt) continue;
+        let relevant = false;
+        if (rev.__typename === "User") {
+          relevant = rev.login?.toLowerCase() === loginLower;
+        } else if (rev.__typename === "Team" && rev.slug && rev.organization?.login) {
+          relevant = userTeamKeys.has(
+            `${rev.organization.login.toLowerCase()}/${rev.slug.toLowerCase()}`
+          );
+        }
+        if (!relevant) continue;
+        const ts = new Date(ev.createdAt).getTime();
+        if (latestRequestAt === null || ts > latestRequestAt) latestRequestAt = ts;
+      }
+
+      const reviewed = latestRequestAt === null || latestReviewAt >= latestRequestAt;
+      result[item.id] = { reviewed, state: latestState };
+    });
+  } catch (err) {
+    console.error("[resolveReviewedStates] error", err);
+  }
 
   return result;
 }
@@ -2752,8 +2824,6 @@ Deno.serve(async (req: Request) => {
         return jsonResponse({ error: "Missing session token" }, 401);
       }
 
-      const pollUrl = new URL(req.url);
-      const checkAllReviews = pollUrl.searchParams.get("check_all") === "true";
       const sessionToken = authHeader.replace("Bearer ", "");
       const supabase = getSupabaseAdmin();
 
@@ -2829,12 +2899,15 @@ Deno.serve(async (req: Request) => {
       const declinedIds = new Set<number>(
         (declinedRows || []).map((r: { pr_id: number }) => r.pr_id)
       );
-      const alreadyReviewedIds = new Set<number>(
+      // PRs we previously determined the user had already reviewed. We no
+      // longer blindly hide these: each poll re-validates them so a fresh
+      // re-request can bring the card back.
+      const previouslyReviewedIds = new Set<number>(
         (reviewedRows || []).map((r: { pr_id: number }) => r.pr_id)
       );
 
       let freshItems = rawFreshItems.filter(
-        (i) => !declinedIds.has(i.id) && !alreadyReviewedIds.has(i.id)
+        (i) => !declinedIds.has(i.id)
       );
 
       const pollUniqueRepos = [
@@ -2900,6 +2973,87 @@ Deno.serve(async (req: Request) => {
       for (const [prId] of snapMap) {
         if (!freshIdSet.has(prId)) {
           removedPrIds.push(prId);
+        }
+      }
+
+      const removalReasons: Record<number, string> = {};
+      // Re-validate every visible card each poll: a card is cleared once the
+      // user's own review is newer than the latest request, and a card that
+      // was previously cleared comes back the moment a fresh re-request lands.
+      const reviewCheckItems = freshItems
+        .map((item) => ({
+          id: item.id,
+          number: item.number,
+          repoFullName: item.repository_url.split("/").slice(-2).join("/"),
+        }))
+        .slice(0, 25);
+
+      if (reviewCheckItems.length > 0) {
+        const reviewedStates = await resolveReviewedStates(
+          user.access_token,
+          reviewCheckItems,
+          user.login,
+          userTeamKeys
+        );
+
+        const reviewedIds = new Set<number>();
+        const newlyReviewedRows: Array<{
+          github_user_id: number;
+          pr_id: number;
+          review_state: string;
+        }> = [];
+        const reinstatedIds: number[] = [];
+
+        for (const item of reviewCheckItems) {
+          const res = reviewedStates[item.id];
+          if (!res) continue;
+          if (res.reviewed) {
+            reviewedIds.add(item.id);
+            // Only announce a removal (UI drop + tone) when the card is
+            // actually leaving the on-screen list this cycle.
+            if (snapMap.has(item.id)) removedPrIds.push(item.id);
+            // Count the review toward stats only the first time we detect it.
+            if (!previouslyReviewedIds.has(item.id)) {
+              removalReasons[item.id] = res.state;
+              newlyReviewedRows.push({
+                github_user_id: user.github_user_id,
+                pr_id: item.id,
+                review_state: res.state,
+              });
+            }
+          } else if (previouslyReviewedIds.has(item.id)) {
+            // Was cleared before, but a newer request arrived: bring it back.
+            reinstatedIds.push(item.id);
+          }
+        }
+
+        if (reviewedIds.size > 0) {
+          const reviewedIdArr = Array.from(reviewedIds);
+          freshItems = freshItems.filter((i) => !reviewedIds.has(i.id));
+          updatedItems = updatedItems.filter((i) => !reviewedIds.has(i.id));
+          newItems = newItems.filter((i) => !reviewedIds.has(i.id));
+          freshIdSet = new Set(freshItems.map((i) => i.id));
+
+          await supabase
+            .from("user_pr_snapshots")
+            .delete()
+            .eq("github_user_id", user.github_user_id)
+            .in("pr_id", reviewedIdArr);
+          for (const id of reviewedIds) snapMap.delete(id);
+        }
+
+        if (newlyReviewedRows.length > 0) {
+          await supabase
+            .from("poll_reviewed_prs")
+            .upsert(newlyReviewedRows, { onConflict: "github_user_id,pr_id" });
+        }
+
+        if (reinstatedIds.length > 0) {
+          await supabase
+            .from("poll_reviewed_prs")
+            .delete()
+            .eq("github_user_id", user.github_user_id)
+            .in("pr_id", reinstatedIds);
         }
       }
 
@@ -2986,60 +3140,6 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      const removalReasons: Record<number, string> = {};
-      const candidateSource = checkAllReviews
-        ? freshItems
-        : [...newItems, ...updatedItems];
-      const reviewCheckCandidates = candidateSource
-        .map((item) => ({
-          id: item.id,
-          number: item.number,
-          repoFullName: item.repository_url.split("/").slice(-2).join("/"),
-        }))
-        .slice(0, 20);
-
-      if (reviewCheckCandidates.length > 0) {
-        const reviewStates = await fetchUserReviewStates(
-          user.access_token,
-          reviewCheckCandidates,
-          user.login
-        );
-
-        const reviewedIds = new Set<number>();
-        for (const [prId, state] of Object.entries(reviewStates)) {
-          const id = Number(prId);
-          reviewedIds.add(id);
-          removedPrIds.push(id);
-          removalReasons[id] = state;
-        }
-
-        if (reviewedIds.size > 0) {
-          freshItems = freshItems.filter((i) => !reviewedIds.has(i.id));
-          updatedItems = updatedItems.filter((i) => !reviewedIds.has(i.id));
-          newItems = newItems.filter((i) => !reviewedIds.has(i.id));
-          freshIdSet = new Set(freshItems.map((i) => i.id));
-
-          const reviewedIdArr = Array.from(reviewedIds);
-          await Promise.all([
-            supabase
-              .from("user_pr_snapshots")
-              .delete()
-              .eq("github_user_id", user.github_user_id)
-              .in("pr_id", reviewedIdArr),
-            supabase.from("poll_reviewed_prs").upsert(
-              reviewedIdArr.map((id) => ({
-                github_user_id: user.github_user_id,
-                pr_id: id,
-                review_state: removalReasons[id] || "",
-              })),
-              { onConflict: "github_user_id,pr_id" }
-            ),
-          ]);
-
-          for (const id of reviewedIds) snapMap.delete(id);
-        }
-      }
-
       const changed =
         updatedItems.length > 0 ||
         newItems.length > 0 ||
@@ -3079,9 +3179,9 @@ Deno.serve(async (req: Request) => {
         await syncSnapshots(supabase, user.github_user_id, freshItems);
       }
 
-      if (alreadyReviewedIds.size > 0) {
+      if (previouslyReviewedIds.size > 0) {
         const rawFreshIdSet = new Set(rawFreshItems.map((i) => i.id));
-        const expiredReviewedIds = Array.from(alreadyReviewedIds).filter(
+        const expiredReviewedIds = Array.from(previouslyReviewedIds).filter(
           (id) => !rawFreshIdSet.has(id)
         );
         if (expiredReviewedIds.length > 0) {
