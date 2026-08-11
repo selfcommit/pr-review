@@ -7,10 +7,9 @@ import { useNotificationPreference } from '../hooks/useNotificationPreference'
 import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost, getSessionToken } from '../utils/api'
 import { isInIframe } from '../utils/iframe'
 import { shouldUseNativeAuth, getNativeRedirectUrl, openNativeOAuth } from '../utils/nativeAuth'
-import { isOverdue } from '../utils/time'
 import { playChime, playRemovalTone, unlockAudio, isAudioUnlocked, preWarmAudio, primeAudio, isPrimed, stopKeepalive } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
-import { mapItem } from '../types/pullRequest'
+import { computePollEffects } from '../lib/pollEffects'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import ReviewRequestedTab from '../components/ReviewRequestedTab'
@@ -124,95 +123,32 @@ function DashboardPage() {
     reviewTimestamps: Record<number, string>
     visibleIds?: number[]
   }) => {
-    const notifyPrIds: number[] = []
-    const messages: ToastMessage[] = []
+    const effects = computePollEffects(
+      {
+        items: reviewRequestedItemsRef.current,
+        reviewTimestamps: reviewTimestampsRef.current,
+        overdueNotified: overdueNotifiedRef.current,
+      },
+      result,
+    )
 
-    if (result.newPRs.length > 0) {
-      for (const raw of result.newPRs) {
-        const pr = mapItem(raw)
-        notifyPrIds.push(pr.id)
-        messages.push({ prId: pr.id, text: `${pr.repository.full_name}: ${pr.title}` })
-      }
-    }
-
-    const currentTimestamps = reviewTimestampsRef.current
-    const currentItems = reviewRequestedItemsRef.current
-
-    for (const item of currentItems) {
-      const prId = item.id as number
-      if (overdueNotifiedRef.current.has(prId)) continue
-      const oldTs = currentTimestamps[prId]
-      if (!oldTs) continue
-      if (isOverdue(oldTs)) continue
-      const newTs = result.reviewTimestamps[prId] || oldTs
-      if (isOverdue(newTs) && !notifyPrIds.includes(prId)) {
-        const pr = mapItem(item)
-        notifyPrIds.push(prId)
-        overdueNotifiedRef.current.add(prId)
-        messages.push({ prId, text: `${pr.repository.full_name}: ${pr.title} (now 24h+)` })
-      }
-    }
-
-    if (result.newPRs.length > 0) {
-      setReviewRequestedItems(prev => [...result.newPRs, ...prev])
-    }
-
-    if (result.updatedPRs.length > 0) {
-      const updatedMap = new Map(result.updatedPRs.map(pr => [pr.id as number, pr]))
-      setReviewRequestedItems(prev =>
-        prev.map(item => {
-          const update = updatedMap.get(item.id as number)
-          return update ? { ...item, ...update } : item
-        })
-      )
-    }
-
-    if (result.removedPRIds.length > 0) {
-      const removedSet = new Set(result.removedPRIds)
-      for (const id of result.removedPRIds) {
-        overdueNotifiedRef.current.delete(id)
-      }
-      const reasons = result.removalReasons || {}
-      const currentIds = new Set(reviewRequestedItemsRef.current.map(it => it.id as number))
-      // Only chime + count stats for cards that were actually on screen and
-      // are being flagged as newly reviewed this cycle (removalReasons entry).
-      const newlyReviewedOnScreen = result.removedPRIds.filter(id => reasons[id] && currentIds.has(id))
-      setReviewRequestedItems(prev =>
-        prev.filter(item => !removedSet.has(item.id as number))
-      )
-
-      if (newlyReviewedOnScreen.length > 0) {
-        if (soundEnabledRef.current) {
-          playRemovalTone()
-        }
-        const counts: Record<string, number> = {}
-        for (const id of newlyReviewedOnScreen) {
-          const state = reasons[id]
-          counts[state] = (counts[state] || 0) + 1
-        }
-        for (const [state, count] of Object.entries(counts)) {
-          if (state === 'approved' || state === 'changes_requested' || state === 'commented') {
-            incrementStat(state, count)
-          }
-        }
-      }
-    }
-
-    if (Array.isArray(result.visibleIds)) {
-      const visibleSet = new Set(result.visibleIds)
-      setReviewRequestedItems(prev => {
-        const filtered = prev.filter(item => visibleSet.has(item.id as number))
-        return filtered.length === prev.length ? prev : filtered
-      })
-    }
-
+    setReviewRequestedItems(effects.nextItems)
     if (Object.keys(result.reviewTimestamps).length > 0) {
-      setReviewTimestamps(prev => ({ ...prev, ...result.reviewTimestamps }))
+      setReviewTimestamps(effects.nextTimestamps)
+    }
+    for (const id of effects.overdueNotifiedAdditions) overdueNotifiedRef.current.add(id)
+    for (const id of effects.overdueNotifiedRemovals) overdueNotifiedRef.current.delete(id)
+
+    if (effects.playRemovalChime) {
+      if (soundEnabledRef.current) playRemovalTone()
+      for (const [state, count] of Object.entries(effects.statsIncrements)) {
+        incrementStat(state as 'approved' | 'changes_requested' | 'commented', count)
+      }
     }
 
-    if (notifyPrIds.length > 0) {
-      console.log('[notify] new-PR notification path entered, prIds:', notifyPrIds, 'messages:', messages.length)
-
+    if (effects.notifications.length > 0) {
+      const messages = effects.notifications
+      const notifyPrIds = effects.highlightedIds
       const title = messages.length === 1
         ? 'New review request'
         : `${messages.length} review requests need attention`
@@ -221,7 +157,7 @@ function DashboardPage() {
 
       triggerHighlight(notifyPrIds)
       setToastMessages(messages)
-      setTimeout(() => scrollToPR(notifyPrIds[0]), 100)
+      setTimeout(() => scrollToPR(firstPrId), 100)
 
       let chimeSucceeded = false
       try {
