@@ -3578,7 +3578,7 @@ Deno.serve(async (req: Request) => {
       if (req.method === "GET") {
         const { data: state } = await supabase
           .from("user_audio_state")
-          .select("audio_unlocked, last_unlocked_at, sound_enabled")
+          .select("audio_unlocked, last_unlocked_at, sound_enabled, desktop_notifications_enabled, last_desktop_notification_at")
           .eq("github_user_id", user.github_user_id)
           .maybeSingle();
 
@@ -3586,6 +3586,8 @@ Deno.serve(async (req: Request) => {
           audio_unlocked: state?.audio_unlocked ?? false,
           last_unlocked_at: state?.last_unlocked_at ?? null,
           sound_enabled: state?.sound_enabled ?? null,
+          desktop_notifications_enabled: state?.desktop_notifications_enabled ?? null,
+          last_desktop_notification_at: state?.last_desktop_notification_at ?? null,
         });
       }
 
@@ -3601,6 +3603,12 @@ Deno.serve(async (req: Request) => {
         }
         if (typeof body?.sound_enabled === "boolean") {
           patch.sound_enabled = body.sound_enabled;
+        }
+        if (typeof body?.desktop_notifications_enabled === "boolean") {
+          patch.desktop_notifications_enabled = body.desktop_notifications_enabled;
+        }
+        if (body?.desktop_notification_delivered === true) {
+          patch.last_desktop_notification_at = new Date().toISOString();
         }
 
         await supabase.from("user_audio_state").upsert(patch, { onConflict: "github_user_id" });

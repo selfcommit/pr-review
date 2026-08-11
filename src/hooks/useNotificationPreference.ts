@@ -2,11 +2,12 @@ import { useState, useCallback, useEffect } from 'react'
 import { requestNotificationPermission } from '../utils/browserNotification'
 import { apiGet, apiPost, getSessionToken } from '../utils/api'
 
-const STORAGE_KEY = 'notification-sound-enabled'
+const SOUND_KEY = 'notification-sound-enabled'
+const DESKTOP_KEY = 'notification-desktop-enabled'
 
-function readPreference(): boolean {
+function readBool(key: string): boolean {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = localStorage.getItem(key)
     if (stored === null) return true
     return stored === 'true'
   } catch {
@@ -14,33 +15,42 @@ function readPreference(): boolean {
   }
 }
 
-function writeLocal(value: boolean) {
+function writeLocal(key: string, value: boolean) {
   try {
-    localStorage.setItem(STORAGE_KEY, String(value))
+    localStorage.setItem(key, String(value))
   } catch {
     // storage unavailable
   }
 }
 
+interface AudioStateResponse {
+  sound_enabled: boolean | null
+  desktop_notifications_enabled: boolean | null
+}
+
 export function useNotificationPreference() {
-  const [soundEnabled, setSoundEnabledState] = useState(readPreference)
+  const [soundEnabled, setSoundEnabledState] = useState(() => readBool(SOUND_KEY))
+  const [desktopEnabled, setDesktopEnabledState] = useState(() => readBool(DESKTOP_KEY))
 
   useEffect(() => {
-    if (soundEnabled) {
+    if (soundEnabled || desktopEnabled) {
       requestNotificationPermission()
     }
-    // Returning users: if the server has a saved preference, prefer it over
-    // whatever localStorage says so the setting really does persist across
-    // devices and reinstalls.
     if (!getSessionToken()) return
     let cancelled = false
-    apiGet<{ sound_enabled: boolean | null }>('audio-state')
+    apiGet<AudioStateResponse>('audio-state')
       .then(state => {
-        if (cancelled) return
-        if (state && typeof state.sound_enabled === 'boolean') {
+        if (cancelled || !state) return
+        if (typeof state.sound_enabled === 'boolean') {
           setSoundEnabledState(state.sound_enabled)
-          writeLocal(state.sound_enabled)
-          if (state.sound_enabled) requestNotificationPermission()
+          writeLocal(SOUND_KEY, state.sound_enabled)
+        }
+        if (typeof state.desktop_notifications_enabled === 'boolean') {
+          setDesktopEnabledState(state.desktop_notifications_enabled)
+          writeLocal(DESKTOP_KEY, state.desktop_notifications_enabled)
+        }
+        if (state.sound_enabled || state.desktop_notifications_enabled) {
+          requestNotificationPermission()
         }
       })
       .catch(() => {})
@@ -51,14 +61,21 @@ export function useNotificationPreference() {
 
   const setSoundEnabled = useCallback((value: boolean) => {
     setSoundEnabledState(value)
-    writeLocal(value)
-    if (value) {
-      requestNotificationPermission()
-    }
+    writeLocal(SOUND_KEY, value)
+    if (value) requestNotificationPermission()
     if (getSessionToken()) {
       apiPost('audio-state', { sound_enabled: value }).catch(() => {})
     }
   }, [])
 
-  return { soundEnabled, setSoundEnabled }
+  const setDesktopEnabled = useCallback((value: boolean) => {
+    setDesktopEnabledState(value)
+    writeLocal(DESKTOP_KEY, value)
+    if (value) requestNotificationPermission()
+    if (getSessionToken()) {
+      apiPost('audio-state', { desktop_notifications_enabled: value }).catch(() => {})
+    }
+  }, [])
+
+  return { soundEnabled, setSoundEnabled, desktopEnabled, setDesktopEnabled }
 }

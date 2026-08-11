@@ -60,6 +60,8 @@ interface ReviewRequestedTabProps {
   reviewTimestamps: Record<number, string>
   soundEnabled: boolean
   onSoundToggle: (value: boolean) => void
+  desktopEnabled: boolean
+  onDesktopToggle: (value: boolean) => void
   highlightedPRIds: Set<number>
 }
 
@@ -78,6 +80,8 @@ function ReviewRequestedTab({
   reviewTimestamps,
   soundEnabled,
   onSoundToggle,
+  desktopEnabled,
+  onDesktopToggle,
   highlightedPRIds,
 }: ReviewRequestedTabProps) {
   const [showDrafts, setShowDrafts] = useState(false)
@@ -132,6 +136,18 @@ function ReviewRequestedTab({
                 await playChime()
               }
             }}
+          >
+            <span className="toggle-knob" />
+          </button>
+        </div>
+        <div className="drafts-toggle">
+          <span className="drafts-toggle-label">Desktop Notifications</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={desktopEnabled}
+            className={`toggle-switch ${desktopEnabled ? 'toggle-switch-on' : ''}`}
+            onClick={() => onDesktopToggle(!desktopEnabled)}
           >
             <span className="toggle-knob" />
           </button>

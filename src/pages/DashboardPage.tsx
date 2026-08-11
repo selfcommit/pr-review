@@ -70,7 +70,7 @@ function DashboardPage() {
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const [prSubTab, setPrSubTab] = useState<PRSubTab>('review-requested')
   const { orgAccess, fetchOrgs, toggleOrgExclusion } = useOrgAccess()
-  const { soundEnabled, setSoundEnabled } = useNotificationPreference()
+  const { soundEnabled, setSoundEnabled, desktopEnabled, setDesktopEnabled } = useNotificationPreference()
   const { settings: profileSettings } = useProfileVisibility()
 
   const [highlightedPRIds, setHighlightedPRIds] = useState<Set<number>>(new Set())
@@ -85,6 +85,8 @@ function DashboardPage() {
 
   const soundEnabledRef = useRef(soundEnabled)
   soundEnabledRef.current = soundEnabled
+  const desktopEnabledRef = useRef(desktopEnabled)
+  desktopEnabledRef.current = desktopEnabled
 
   const loadPullRequestsRef = useRef<(() => Promise<void>) | null>(null)
 
@@ -209,10 +211,27 @@ function DashboardPage() {
 
       const silent = soundEnabledRef.current ? chimeSucceeded : true
       try {
-        sendBrowserNotification(title, body, () => {
-          triggerHighlight([firstPrId])
-          scrollToPR(firstPrId)
-        }, `review-request-${firstPrId}`, silent)
+        const channel = sendBrowserNotification(
+          title,
+          body,
+          () => {
+            triggerHighlight([firstPrId])
+            scrollToPR(firstPrId)
+          },
+          `review-request-${firstPrId}`,
+          silent,
+          {
+            desktopEnabled: desktopEnabledRef.current,
+            onDelivered: () => {
+              if (getSessionToken()) {
+                apiPost('audio-state', { desktop_notification_delivered: true }).catch(() => {})
+              }
+            },
+          },
+        )
+        if (channel === 'none') {
+          // OS notification was not delivered; the in-app toast still fires.
+        }
       } catch (err) {
         console.error('[notify] sendBrowserNotification threw:', err)
       }
@@ -532,7 +551,9 @@ function DashboardPage() {
     const silent = soundEnabledRef.current ? chimeSucceeded : true
     const title = 'Test review request'
     const body = 'octocat/hello-world#99 - Fix the widget'
-    sendBrowserNotification(title, body, undefined, 'test-notification', silent)
+    sendBrowserNotification(title, body, undefined, 'test-notification', silent, {
+      desktopEnabled: desktopEnabledRef.current,
+    })
     setToastMessages([{ prId: -1, text: 'octocat/hello-world#99 - Fix the widget' }])
   }, [reportAudioUnlocked])
 
@@ -725,6 +746,8 @@ function DashboardPage() {
                       reviewTimestamps={reviewTimestamps}
                       soundEnabled={soundEnabled}
                       onSoundToggle={setSoundEnabled}
+                      desktopEnabled={desktopEnabled}
+                      onDesktopToggle={setDesktopEnabled}
                       highlightedPRIds={highlightedPRIds}
                     />
                   )}
