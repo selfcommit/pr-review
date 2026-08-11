@@ -199,13 +199,14 @@ function DashboardPage() {
   const [pauseVisible, setPauseVisible] = useState(false)
   const [pauseSecondsRemaining, setPauseSecondsRemaining] = useState<number | null>(null)
   useEffect(() => {
-    if (!pollingStatus.paused || pollingStatus.resumeAt === null) {
+    // Only surface the banner for a real GitHub rate-limit pause. The client's
+    // own idle backoff and the brief pause during a manual refresh must never
+    // show a Paused banner — that was the reason it appeared so often.
+    if (!pollingStatus.paused || pollingStatus.resumeAt === null || pollingStatus.reason !== 'rate-limit') {
       setPauseVisible(false)
       setPauseSecondsRemaining(null)
       return
     }
-    // Only surface the banner once the pause has lasted more than 30s so the
-    // brief pause during a manual refresh does not flash a banner.
     const bannerAt = Date.now() + 30_000
     const showTimer = setTimeout(() => setPauseVisible(true), Math.max(0, bannerAt - Date.now()))
     const tick = setInterval(() => {
@@ -217,7 +218,7 @@ function DashboardPage() {
       clearTimeout(showTimer)
       clearInterval(tick)
     }
-  }, [pollingStatus.paused, pollingStatus.resumeAt])
+  }, [pollingStatus.paused, pollingStatus.resumeAt, pollingStatus.reason])
 
   const handleOAuthMessage = useCallback((event: MessageEvent) => {
     if (event.origin !== window.location.origin) return

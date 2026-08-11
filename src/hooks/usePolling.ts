@@ -27,11 +27,11 @@ interface UsePollingOptions {
 // already in the past — we still want to try again before the tab goes stale.
 export const PAUSE_FALLBACK_MS = 30_000
 
-// Regression: your session hit "remaining=30" with a reset time already in
-// the past. The old code did `resetMs = reset*1000 - now + 5000`; if the
-// result was <= 0 it silently skipped scheduling the unpause, leaving the
-// client paused until a full page refresh. This helper is the single source
-// of truth for "given the rate-limit headers, how long should we pause?".
+// GitHub's Search API allows only 30 requests per minute per authenticated
+// user, so the pause threshold has to sit well below 30 or every response
+// would trip it — that was the reason "Paused" showed up in normal use.
+export const RATE_LIMIT_PAUSE_THRESHOLD = 5
+
 export function computePauseDelayMs(
   rateLimitRemaining: string | null,
   rateLimitReset: string | null,
@@ -39,7 +39,7 @@ export function computePauseDelayMs(
 ): number | null {
   if (!rateLimitRemaining) return null
   const remaining = parseInt(rateLimitRemaining, 10)
-  if (Number.isNaN(remaining) || remaining >= 50) return null
+  if (Number.isNaN(remaining) || remaining >= RATE_LIMIT_PAUSE_THRESHOLD) return null
   const resetSec = rateLimitReset ? parseInt(rateLimitReset, 10) : NaN
   if (!Number.isFinite(resetSec)) return PAUSE_FALLBACK_MS
   const resetMs = resetSec * 1000 - now + 5000
@@ -47,9 +47,38 @@ export function computePauseDelayMs(
   return resetMs
 }
 
+// Adaptive interval: when the last several polls returned nothing new, stretch
+// the interval out. When something changes, snap back to the fast tempo so
+// tiles still feel live. This is the primary lever for spending less of the
+// tiny Search API budget on responses that do not change the UI.
+export const IDLE_BACKOFF_STEPS = [1, 2, 4, 8, 12]
+export const HIDDEN_INTERVAL_MS = 60_000
+
+export function computeNextIntervalMs(
+  baseIntervalMs: number,
+  consecutiveIdlePolls: number,
+  hidden: boolean,
+): number {
+  if (hidden) return HIDDEN_INTERVAL_MS
+  const stepIdx = Math.min(IDLE_BACKOFF_STEPS.length - 1, consecutiveIdlePolls)
+  return baseIntervalMs * IDLE_BACKOFF_STEPS[stepIdx]
+}
+
+function pollResultHadChange(result: PollResult): boolean {
+  if (result.changed) return true
+  if (result.removedPRIds && result.removedPRIds.length > 0) return true
+  if (result.newPRs && result.newPRs.length > 0) return true
+  if (result.updatedPRs && result.updatedPRs.length > 0) return true
+  return false
+}
+
 export interface PollingStatus {
   paused: boolean
   resumeAt: number | null
+  // True only when we're pausing because GitHub actually reported low budget,
+  // not when the client is throttling itself between polls. The banner keys
+  // off this so ordinary backoff never surfaces as "Paused".
+  reason: 'rate-limit' | 'manual' | null
 }
 
 export function usePolling({
@@ -65,6 +94,8 @@ export function usePolling({
   const resumeAtRef = useRef<number | null>(null)
   const consecutiveErrorsRef = useRef(0)
   const effectiveIntervalRef = useRef(intervalMs)
+  const consecutiveIdleRef = useRef(0)
+  const hiddenRef = useRef(typeof document !== 'undefined' && document.hidden)
   const onChangesRef = useRef(onChanges)
   onChangesRef.current = onChanges
   const onResumeRef = useRef(onResume)
@@ -72,7 +103,7 @@ export function usePolling({
   const pollCountRef = useRef(0)
   const pollRef = useRef<(() => Promise<void>) | null>(null)
 
-  const [status, setStatus] = useState<PollingStatus>({ paused: false, resumeAt: null })
+  const [status, setStatus] = useState<PollingStatus>({ paused: false, resumeAt: null, reason: null })
 
   const startIntervalRef = useRef<(() => void) | null>(null)
 
@@ -88,20 +119,17 @@ export function usePolling({
     if (!pausedRef.current) return
     pausedRef.current = false
     resumeAtRef.current = null
-    setStatus({ paused: false, resumeAt: null })
+    setStatus({ paused: false, resumeAt: null, reason: null })
     onResumeRef.current?.()
-    // Fire an immediate poll so tiles catch up instantly rather than waiting
-    // a full interval — the whole reason the pause existed was that tiles
-    // were behind reality.
     void pollRef.current?.()
   }, [clearPauseTimeout])
 
   const scheduleResume = useCallback(
-    (delayMs: number) => {
+    (delayMs: number, reason: 'rate-limit' | 'manual') => {
       clearPauseTimeout()
       const safeDelay = Math.max(0, delayMs)
       resumeAtRef.current = Date.now() + safeDelay
-      setStatus({ paused: true, resumeAt: resumeAtRef.current })
+      setStatus({ paused: true, resumeAt: resumeAtRef.current, reason })
       pauseTimeoutRef.current = setTimeout(() => {
         pauseTimeoutRef.current = null
         resumeFromPause()
@@ -109,6 +137,14 @@ export function usePolling({
     },
     [clearPauseTimeout, resumeFromPause],
   )
+
+  const applyEffectiveInterval = useCallback(() => {
+    const next = computeNextIntervalMs(intervalMs, consecutiveIdleRef.current, hiddenRef.current)
+    if (next !== effectiveIntervalRef.current) {
+      effectiveIntervalRef.current = next
+      if (startIntervalRef.current) startIntervalRef.current()
+    }
+  }, [intervalMs])
 
   const poll = useCallback(async () => {
     if (pausedRef.current) return
@@ -122,21 +158,13 @@ export function usePolling({
       const pauseDelay = computePauseDelayMs(result.rateLimitRemaining, result.rateLimitReset)
       if (pauseDelay !== null) {
         pausedRef.current = true
-        scheduleResume(pauseDelay)
+        scheduleResume(pauseDelay, 'rate-limit')
         return
       }
-      if (result.rateLimitRemaining) {
-        const remaining = parseInt(result.rateLimitRemaining, 10)
-        const prevInterval = effectiveIntervalRef.current
-        if (!Number.isNaN(remaining) && remaining < 100) {
-          effectiveIntervalRef.current = intervalMs * 2
-        } else {
-          effectiveIntervalRef.current = intervalMs
-        }
-        if (effectiveIntervalRef.current !== prevInterval && startIntervalRef.current) {
-          startIntervalRef.current()
-        }
-      }
+
+      const hadChange = pollResultHadChange(result)
+      consecutiveIdleRef.current = hadChange ? 0 : consecutiveIdleRef.current + 1
+      applyEffectiveInterval()
 
       const hasVisibleIds = Array.isArray(result.visibleIds)
       if (result.changed || (result.removedPRIds && result.removedPRIds.length > 0) || hasVisibleIds) {
@@ -147,14 +175,12 @@ export function usePolling({
         }
       }
     } catch (err) {
-      // Never let a transient failure permanently pause the client — the whole
-      // point of polling is that the next tick tries again.
       consecutiveErrorsRef.current += 1
       if (consecutiveErrorsRef.current === 1) {
         console.warn('[usePolling] poll failed, will retry:', err)
       }
     }
-  }, [intervalMs, fullCheckEveryN, scheduleResume])
+  }, [intervalMs, fullCheckEveryN, scheduleResume, applyEffectiveInterval])
 
   pollRef.current = poll
 
@@ -162,13 +188,13 @@ export function usePolling({
     pausedRef.current = true
     clearPauseTimeout()
     resumeAtRef.current = null
-    setStatus({ paused: true, resumeAt: null })
+    setStatus({ paused: true, resumeAt: null, reason: 'manual' })
   }, [clearPauseTimeout])
   const resume = useCallback(() => {
     clearPauseTimeout()
     pausedRef.current = false
     resumeAtRef.current = null
-    setStatus({ paused: false, resumeAt: null })
+    setStatus({ paused: false, resumeAt: null, reason: null })
   }, [clearPauseTimeout])
 
   useEffect(() => {
@@ -183,8 +209,6 @@ export function usePolling({
     const startInterval = () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
       intervalRef.current = setInterval(() => {
-        // Safety net: if we ever miss the scheduled unpause (tab was sleeping,
-        // setTimeout got dropped), the interval tick will notice and recover.
         if (pausedRef.current && resumeAtRef.current !== null && Date.now() >= resumeAtRef.current) {
           resumeFromPause()
           return
@@ -198,15 +222,20 @@ export function usePolling({
 
     const handleVisibility = () => {
       if (!document.hidden) {
-        // Coming back to the tab — if we were paused past the reset, recover
-        // now instead of waiting for the next interval to notice.
+        hiddenRef.current = false
+        // Coming back after being hidden — reset the idle backoff so the
+        // dashboard feels fresh again immediately.
+        consecutiveIdleRef.current = 0
+        applyEffectiveInterval()
         if (pausedRef.current && resumeAtRef.current !== null && Date.now() >= resumeAtRef.current) {
           resumeFromPause()
         } else {
           poll()
         }
+      } else {
+        hiddenRef.current = true
+        applyEffectiveInterval()
       }
-      startInterval()
     }
 
     document.addEventListener('visibilitychange', handleVisibility)
@@ -217,11 +246,15 @@ export function usePolling({
         if (isActive) {
           pausedRef.current = false
           resumeAtRef.current = null
-          setStatus({ paused: false, resumeAt: null })
+          setStatus({ paused: false, resumeAt: null, reason: null })
+          hiddenRef.current = false
+          consecutiveIdleRef.current = 0
+          applyEffectiveInterval()
           poll()
           startInterval()
         } else {
           pausedRef.current = true
+          hiddenRef.current = true
           if (intervalRef.current) {
             clearInterval(intervalRef.current)
             intervalRef.current = null
@@ -243,7 +276,7 @@ export function usePolling({
       document.removeEventListener('visibilitychange', handleVisibility)
       if (removeNativeListener) removeNativeListener()
     }
-  }, [enabled, poll, resumeFromPause, clearPauseTimeout])
+  }, [enabled, poll, resumeFromPause, clearPauseTimeout, applyEffectiveInterval])
 
   return { pause, resume, status }
 }

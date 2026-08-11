@@ -1,16 +1,32 @@
 import { describe, it, expect } from 'vitest'
-import { computePauseDelayMs, PAUSE_FALLBACK_MS } from './usePolling'
+import {
+  computePauseDelayMs,
+  computeNextIntervalMs,
+  PAUSE_FALLBACK_MS,
+  RATE_LIMIT_PAUSE_THRESHOLD,
+  IDLE_BACKOFF_STEPS,
+  HIDDEN_INTERVAL_MS,
+} from './usePolling'
 
-// Regression: PR dashboard tiles froze until page refresh. The client's poll
-// hit `remaining=30, reset=<in the past>`, paused itself, and never scheduled
-// an unpause because the naive computation returned a non-positive delay.
-// computePauseDelayMs is now the single source of truth for that decision.
+// Regression: PR dashboard tiles froze until page refresh, and a follow-up
+// bug had the "Paused" banner tripping on every response because the pause
+// threshold (50) was higher than the Search API's whole budget (30/min).
 describe('computePauseDelayMs', () => {
   const now = 1_700_000_000_000
 
-  it('returns null when there is plenty of rate-limit budget', () => {
-    expect(computePauseDelayMs('4900', String(Math.floor(now / 1000) + 60), now)).toBeNull()
-    expect(computePauseDelayMs('50', String(Math.floor(now / 1000) + 60), now)).toBeNull()
+  it('does not pause on healthy Search API budgets (25 of 30 remaining)', () => {
+    expect(computePauseDelayMs('25', String(Math.floor(now / 1000) + 60), now)).toBeNull()
+  })
+
+  it('does not pause at the threshold boundary', () => {
+    expect(
+      computePauseDelayMs(String(RATE_LIMIT_PAUSE_THRESHOLD), String(Math.floor(now / 1000) + 60), now),
+    ).toBeNull()
+  })
+
+  it('only pauses when budget is genuinely low', () => {
+    const belowThreshold = String(RATE_LIMIT_PAUSE_THRESHOLD - 1)
+    expect(computePauseDelayMs(belowThreshold, String(Math.floor(now / 1000) + 30), now)).not.toBeNull()
   })
 
   it('returns null when the header is missing or unparseable', () => {
@@ -18,29 +34,45 @@ describe('computePauseDelayMs', () => {
     expect(computePauseDelayMs('not-a-number', '1', now)).toBeNull()
   })
 
-  // The bug that froze cards for hours.
   it('returns the fallback delay when the reset time is already in the past', () => {
     const pastReset = String(Math.floor(now / 1000) - 3600)
-    expect(computePauseDelayMs('30', pastReset, now)).toBe(PAUSE_FALLBACK_MS)
+    expect(computePauseDelayMs('1', pastReset, now)).toBe(PAUSE_FALLBACK_MS)
   })
 
   it('returns the fallback delay when the reset field is missing', () => {
-    expect(computePauseDelayMs('30', null, now)).toBe(PAUSE_FALLBACK_MS)
+    expect(computePauseDelayMs('1', null, now)).toBe(PAUSE_FALLBACK_MS)
   })
 
   it('returns the fallback delay when the reset field is unparseable', () => {
-    expect(computePauseDelayMs('30', 'not-a-number', now)).toBe(PAUSE_FALLBACK_MS)
+    expect(computePauseDelayMs('1', 'not-a-number', now)).toBe(PAUSE_FALLBACK_MS)
   })
 
   it('returns the real countdown (with a 5s cushion) when the reset is in the future', () => {
     const futureReset = Math.floor(now / 1000) + 45
-    const delay = computePauseDelayMs('30', String(futureReset), now)
+    const delay = computePauseDelayMs('1', String(futureReset), now)
     expect(delay).toBe(45_000 + 5_000)
   })
+})
 
-  it('returns the fallback delay when the reset is exactly now (edge)', () => {
-    const nowReset = String(Math.floor(now / 1000))
-    // resetMs = 5s cushion, > 0, so it returns 5000 — still fine, not stuck.
-    expect(computePauseDelayMs('30', nowReset, now)).toBe(5_000)
+describe('computeNextIntervalMs — spend less budget when nothing is changing', () => {
+  const base = 5000
+
+  it('stays at the base interval when the list keeps changing', () => {
+    expect(computeNextIntervalMs(base, 0, false)).toBe(base)
+  })
+
+  it('stretches the interval as consecutive polls come back with no changes', () => {
+    const first = computeNextIntervalMs(base, 1, false)
+    const second = computeNextIntervalMs(base, 3, false)
+    const capped = computeNextIntervalMs(base, 999, false)
+    expect(first).toBeGreaterThan(base)
+    expect(second).toBeGreaterThan(first)
+    // Never grow past the last step of the backoff schedule.
+    expect(capped).toBe(base * IDLE_BACKOFF_STEPS[IDLE_BACKOFF_STEPS.length - 1])
+  })
+
+  it('drops to a slow heartbeat when the tab is hidden', () => {
+    expect(computeNextIntervalMs(base, 0, true)).toBe(HIDDEN_INTERVAL_MS)
+    expect(computeNextIntervalMs(base, 999, true)).toBe(HIDDEN_INTERVAL_MS)
   })
 })

@@ -2855,6 +2855,30 @@ Deno.serve(async (req: Request) => {
       let rateLimitReset: string | null = null;
       let rawFreshItems: GitHubSearchItem[] = [];
 
+      // Short-lived server-side cache: multiple tabs and back-to-back polls
+      // from the same user share one GitHub Search API call. Search's 30/min
+      // budget is easy to blow through otherwise, and every extra call was a
+      // wasted token spent on an unchanged answer.
+      const POLL_CACHE_TTL_MS = 4000;
+      let servedFromCache = false;
+      if (!testFixture) {
+        const { data: cachedRow } = await supabase
+          .from("poll_reviews_cache")
+          .select("payload, cached_at")
+          .eq("github_user_id", user.github_user_id)
+          .maybeSingle();
+        if (cachedRow && cachedRow.payload && cachedRow.cached_at) {
+          const cachedAt = new Date(cachedRow.cached_at as string).getTime();
+          if (!Number.isNaN(cachedAt) && Date.now() - cachedAt < POLL_CACHE_TTL_MS) {
+            servedFromCache = true;
+            return jsonResponse({
+              ...(cachedRow.payload as Record<string, unknown>),
+              servedFromCache: true,
+            });
+          }
+        }
+      }
+
       if (testFixture) {
         rawFreshItems = Array.isArray(testFixture.search?.items)
           ? (testFixture.search!.items as GitHubSearchItem[])
@@ -3225,7 +3249,7 @@ Deno.serve(async (req: Request) => {
 
       const visibleIds = (freshItems as GitHubSearchItem[]).map((it) => it.id);
 
-      return jsonResponse({
+      const responseBody = {
         changed,
         updatedPRs: updatedItems,
         removedPRIds: removedPrIds,
@@ -3235,7 +3259,26 @@ Deno.serve(async (req: Request) => {
         visibleIds,
         rateLimitRemaining,
         rateLimitReset,
-      });
+      };
+
+      if (!testFixture) {
+        try {
+          await supabase
+            .from("poll_reviews_cache")
+            .upsert({
+              github_user_id: user.github_user_id,
+              payload: responseBody,
+              cached_at: new Date().toISOString(),
+            });
+        } catch (err) {
+          console.error("[poll-reviews] failed to write cache:", err);
+        }
+      }
+
+      // Silence the unused-var warning for the flag we may want later.
+      void servedFromCache;
+
+      return jsonResponse(responseBody);
     }
 
     if (path === "stats") {
