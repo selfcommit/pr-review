@@ -147,6 +147,77 @@ describe('poll effects — visibility reconciliation', () => {
   })
 })
 
+// Regression coverage for the "card lingered after approval" bug: the server
+// now proactively signals removal the moment it detects a terminal review
+// (approved, changes requested, commented), even if GitHub's search index
+// is stale and still lists the PR as review-requested for a few minutes.
+describe('poll effects — removal wins over a stale visible list', () => {
+  it('drops the card even when the server still lists it inside visibleIds', () => {
+    const existing = makeRaw(6978)
+    const effects = computePollEffects(
+      emptyState({ items: [existing] }),
+      emptyResult({
+        removedPRIds: [6978],
+        removalReasons: { 6978: 'approved' },
+        visibleIds: [6978],
+      }),
+    )
+    expect(effects.nextItems).toHaveLength(0)
+    expect(effects.playRemovalChime).toBe(true)
+    expect(effects.statsIncrements).toEqual({ approved: 1 })
+  })
+
+  it('drops the card for a changes-requested terminal state', () => {
+    const existing = makeRaw(6978)
+    const effects = computePollEffects(
+      emptyState({ items: [existing] }),
+      emptyResult({
+        removedPRIds: [6978],
+        removalReasons: { 6978: 'changes_requested' },
+        visibleIds: [6978],
+      }),
+    )
+    expect(effects.nextItems).toHaveLength(0)
+    expect(effects.playRemovalChime).toBe(true)
+    expect(effects.statsIncrements).toEqual({ changes_requested: 1 })
+  })
+
+  it('drops the card for a plain-comment terminal state', () => {
+    const existing = makeRaw(6978)
+    const effects = computePollEffects(
+      emptyState({ items: [existing] }),
+      emptyResult({
+        removedPRIds: [6978],
+        removalReasons: { 6978: 'commented' },
+        visibleIds: [6978],
+      }),
+    )
+    expect(effects.nextItems).toHaveLength(0)
+    expect(effects.statsIncrements).toEqual({ commented: 1 })
+  })
+
+  it('does not double-fire the chime when two consecutive polls both include the removed id', () => {
+    const first = computePollEffects(
+      emptyState({ items: [makeRaw(6978)] }),
+      emptyResult({
+        removedPRIds: [6978],
+        removalReasons: { 6978: 'approved' },
+        visibleIds: [6978],
+      }),
+    )
+    expect(first.playRemovalChime).toBe(true)
+    const second = computePollEffects(
+      { items: first.nextItems, reviewTimestamps: {}, overdueNotified: new Set<number>() },
+      emptyResult({
+        removedPRIds: [6978],
+        removalReasons: { 6978: 'approved' },
+        visibleIds: [6978],
+      }),
+    )
+    expect(second.playRemovalChime).toBe(false)
+  })
+})
+
 // Regression coverage for the "tagged but no card appeared" bug: the badge
 // updated on its own while the review-requested list never re-rendered the
 // newly arrived pull request. Every scenario below reproduces one of the

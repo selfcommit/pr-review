@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.39.3";
+import { decideReviewedState } from "./reviewedState.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1345,10 +1346,19 @@ async function resolveReviewedStates(
   accessToken: string,
   items: { id: number; number: number; repoFullName: string }[],
   userLogin: string,
-  userTeamKeys: Set<string>
+  userTeamKeys: Set<string>,
+  fixtureGraphql?: { data?: Record<string, { pullRequest: unknown } | null> } | null
 ): Promise<Record<number, ReviewedState>> {
   const result: Record<number, ReviewedState> = {};
   if (items.length === 0) return result;
+
+  if (fixtureGraphql && fixtureGraphql.data) {
+    items.forEach((item, idx) => {
+      const pr = fixtureGraphql.data?.[`pr${idx}`]?.pullRequest;
+      result[item.id] = decideReviewedState(pr as never, userLogin, userTeamKeys);
+    });
+    return result;
+  }
 
   const prFragment = `
     reviews(first: 100) {
@@ -1394,49 +1404,9 @@ async function resolveReviewedStates(
     const data = await resp.json();
     if (!data || !data.data) return result;
 
-    const loginLower = userLogin.toLowerCase();
-    const HANDLED = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED"]);
-
     items.forEach((item, idx) => {
       const pr = data.data[`pr${idx}`]?.pullRequest;
-      if (!pr) return;
-
-      let latestReviewAt: number | null = null;
-      let latestState = "";
-      for (const review of pr.reviews?.nodes || []) {
-        if (review?.author?.login?.toLowerCase() !== loginLower) continue;
-        if (!review.submittedAt || !HANDLED.has(review.state)) continue;
-        const ts = new Date(review.submittedAt).getTime();
-        if (latestReviewAt === null || ts >= latestReviewAt) {
-          latestReviewAt = ts;
-          latestState = String(review.state).toLowerCase();
-        }
-      }
-
-      if (latestReviewAt === null) {
-        result[item.id] = { reviewed: false, state: "" };
-        return;
-      }
-
-      let latestRequestAt: number | null = null;
-      for (const ev of pr.timelineItems?.nodes || []) {
-        const rev = ev?.requestedReviewer;
-        if (!rev || !ev.createdAt) continue;
-        let relevant = false;
-        if (rev.__typename === "User") {
-          relevant = rev.login?.toLowerCase() === loginLower;
-        } else if (rev.__typename === "Team" && rev.slug && rev.organization?.login) {
-          relevant = userTeamKeys.has(
-            `${rev.organization.login.toLowerCase()}/${rev.slug.toLowerCase()}`
-          );
-        }
-        if (!relevant) continue;
-        const ts = new Date(ev.createdAt).getTime();
-        if (latestRequestAt === null || ts > latestRequestAt) latestRequestAt = ts;
-      }
-
-      const reviewed = latestRequestAt === null || latestReviewAt >= latestRequestAt;
-      result[item.id] = { reviewed, state: latestState };
+      result[item.id] = decideReviewedState(pr, userLogin, userTeamKeys);
     });
   } catch (err) {
     console.error("[resolveReviewedStates] error", err);
@@ -2827,6 +2797,32 @@ Deno.serve(async (req: Request) => {
       const sessionToken = authHeader.replace("Bearer ", "");
       const supabase = getSupabaseAdmin();
 
+      // Operator-only smoke-test hook: swap the live GitHub calls for a canned
+      // fixture. Gated on the service-role secret already present in the
+      // deployed environment. If either header is missing or wrong the poll
+      // runs exactly as it always has — no user can trigger this path.
+      let testFixture: {
+        search?: { items?: GitHubSearchItem[]; total_count?: number };
+        graphql?: { data?: Record<string, { pullRequest: unknown } | null> };
+        rateLimitRemaining?: string | null;
+        rateLimitReset?: string | null;
+      } | null = null;
+      const fixtureHeader = req.headers.get("X-PR-Review-Test-Fixture");
+      const fixtureAuthHeader = req.headers.get("X-PR-Review-Test-Auth");
+      if (fixtureHeader && fixtureAuthHeader) {
+        const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+        if (serviceRoleKey && fixtureAuthHeader === serviceRoleKey) {
+          try {
+            testFixture = JSON.parse(atob(fixtureHeader));
+          } catch (err) {
+            console.error("[poll-reviews] failed to parse test fixture", err);
+            return jsonResponse({ error: "Invalid test fixture" }, 400);
+          }
+        } else {
+          return jsonResponse({ error: "Invalid test fixture auth" }, 401);
+        }
+      }
+
       const { data: user } = await supabase
         .from("app_users")
         .select("github_user_id, access_token, login")
@@ -2855,35 +2851,43 @@ Deno.serve(async (req: Request) => {
       };
 
       const reviewRequestedQuery = "is:open is:pr user-review-requested:@me";
-      const searchResp = await fetch(
-        `https://api.github.com/search/issues?q=${encodeURIComponent(reviewRequestedQuery)}&per_page=100`,
-        { headers: ghHeaders }
-      );
+      let rateLimitRemaining: string | null = null;
+      let rateLimitReset: string | null = null;
+      let rawFreshItems: GitHubSearchItem[] = [];
 
-      if (searchResp.status === 401) {
-        return jsonResponse(
-          { error: "GitHub token expired", code: "token_expired" },
-          401
+      if (testFixture) {
+        rawFreshItems = Array.isArray(testFixture.search?.items)
+          ? (testFixture.search!.items as GitHubSearchItem[])
+          : [];
+        rateLimitRemaining = testFixture.rateLimitRemaining ?? null;
+        rateLimitReset = testFixture.rateLimitReset ?? null;
+      } else {
+        const searchResp = await fetch(
+          `https://api.github.com/search/issues?q=${encodeURIComponent(reviewRequestedQuery)}&per_page=100`,
+          { headers: ghHeaders }
         );
+
+        if (searchResp.status === 401) {
+          return jsonResponse(
+            { error: "GitHub token expired", code: "token_expired" },
+            401
+          );
+        }
+
+        rateLimitRemaining = searchResp.headers.get("X-RateLimit-Remaining") || null;
+        rateLimitReset = searchResp.headers.get("X-RateLimit-Reset") || null;
+
+        const searchRaw = await searchResp.json();
+        const searchResult =
+          searchRaw && typeof searchRaw === "object"
+            ? searchRaw
+            : { items: [], total_count: 0 };
+        if (searchResult.items && !Array.isArray(searchResult.items)) {
+          searchResult.items = [];
+        }
+
+        rawFreshItems = Array.isArray(searchResult.items) ? searchResult.items : [];
       }
-
-      const rateLimitRemaining =
-        searchResp.headers.get("X-RateLimit-Remaining") || null;
-      const rateLimitReset =
-        searchResp.headers.get("X-RateLimit-Reset") || null;
-
-      const searchRaw = await searchResp.json();
-      const searchResult =
-        searchRaw && typeof searchRaw === "object"
-          ? searchRaw
-          : { items: [], total_count: 0 };
-      if (searchResult.items && !Array.isArray(searchResult.items)) {
-        searchResult.items = [];
-      }
-
-      const rawFreshItems: GitHubSearchItem[] = Array.isArray(searchResult.items)
-        ? searchResult.items
-        : [];
 
       const [{ data: declinedRows }, { data: reviewedRows }] = await Promise.all([
         supabase
@@ -2980,20 +2984,24 @@ Deno.serve(async (req: Request) => {
       // Re-validate every visible card each poll: a card is cleared once the
       // user's own review is newer than the latest request, and a card that
       // was previously cleared comes back the moment a fresh re-request lands.
+      // Raised from 25 to 100 (the GitHub search page size) so a card can't
+      // linger on the dashboard simply because its position in the search
+      // result put it outside the reviewed-check window.
       const reviewCheckItems = freshItems
         .map((item) => ({
           id: item.id,
           number: item.number,
           repoFullName: item.repository_url.split("/").slice(-2).join("/"),
         }))
-        .slice(0, 25);
+        .slice(0, 100);
 
       if (reviewCheckItems.length > 0) {
         const reviewedStates = await resolveReviewedStates(
           user.access_token,
           reviewCheckItems,
           user.login,
-          userTeamKeys
+          userTeamKeys,
+          testFixture?.graphql ?? null
         );
 
         const reviewedIds = new Set<number>();

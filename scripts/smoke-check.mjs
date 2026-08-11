@@ -91,45 +91,173 @@ async function supabaseAdmin(method, path, body) {
   return text ? JSON.parse(text) : null
 }
 
-if (SUPABASE_SERVICE_ROLE_KEY) {
-  await check('poll-reviews accepts a live seeded session and returns the expected shape', async () => {
-    const stamp = Date.now()
-    const syntheticGithubId = 900000000 + (stamp % 1000000)
-    const sessionToken = `smoke-${stamp}-${Math.random().toString(36).slice(2, 10)}`
-    const login = `smoke-user-${stamp}`
+function fakeSearchItem({ prId, prNumber, repo }) {
+  const [owner, name] = repo.split('/')
+  return {
+    id: prId,
+    number: prNumber,
+    title: `Smoke PR ${prNumber}`,
+    html_url: `https://github.com/${repo}/pull/${prNumber}`,
+    created_at: '2026-08-11T12:00:00Z',
+    updated_at: '2026-08-11T17:00:00Z',
+    state: 'open',
+    draft: false,
+    pull_request: {},
+    repository_url: `https://api.github.com/repos/${owner}/${name}`,
+    user: { login: 'someone-else', avatar_url: '' },
+  }
+}
 
-    await supabaseAdmin('POST', 'app_users', {
+function fakeGraphqlResponse({ reviewState, viewerLogin, requestAt, reviewAt }) {
+  return {
+    data: {
+      pr0: {
+        pullRequest: {
+          reviews: {
+            nodes: [
+              { author: { login: viewerLogin }, state: reviewState, submittedAt: reviewAt },
+            ],
+          },
+          timelineItems: {
+            nodes: [
+              {
+                createdAt: requestAt,
+                requestedReviewer: { __typename: 'User', login: viewerLogin },
+              },
+            ],
+          },
+          comments: { nodes: [] },
+        },
+      },
+    },
+  }
+}
+
+async function runOperatorScenario({ label, reviewState, expectedReason }) {
+  await check(label, async () => {
+    const stamp = Date.now() + Math.floor(Math.random() * 1000)
+    const syntheticGithubId = 900000000 + (stamp % 1000000)
+    const login = `smoke-user-${stamp}`
+    const prId = 8000000000 + (stamp % 1000000)
+    const prNumber = 99000 + (stamp % 900)
+    const repo = 'smoke-org/smoke-repo'
+
+    const inserted = await supabaseAdmin('POST', 'app_users', {
       github_user_id: syntheticGithubId,
       login,
       name: 'Smoke Check User',
       avatar_url: '',
       access_token: 'smoke-check-bogus-github-token',
-      session_token: sessionToken,
     })
+    const sessionToken = inserted?.[0]?.session_token
+    if (!sessionToken) throw new Error('failed to read back synthetic session token')
+
+    await supabaseAdmin('POST', 'user_pr_snapshots', {
+      github_user_id: syntheticGithubId,
+      pr_id: prId,
+      pr_number: prNumber,
+      repo_full_name: repo,
+      state: 'open',
+      draft: false,
+      title: `Smoke PR ${prNumber}`,
+    })
+
+    const fixture = {
+      search: {
+        items: [fakeSearchItem({ prId, prNumber, repo })],
+        total_count: 1,
+      },
+      graphql: fakeGraphqlResponse({
+        reviewState,
+        viewerLogin: login,
+        requestAt: '2026-08-11T12:00:00Z',
+        reviewAt: '2026-08-11T17:00:00Z',
+      }),
+      rateLimitRemaining: '4900',
+      rateLimitReset: `${Math.floor(Date.now() / 1000) + 3600}`,
+    }
 
     try {
       const res = await fetch(`${base}/poll-reviews`, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          'X-PR-Review-Test-Fixture': Buffer.from(JSON.stringify(fixture)).toString('base64'),
+          'X-PR-Review-Test-Auth': SUPABASE_SERVICE_ROLE_KEY,
+        },
       })
-      // The synthetic access token is not a real GitHub token, so the endpoint
-      // should surface GitHub's 401 as { code: "token_expired" }. Anything
-      // other than 401 (e.g. a 500 crash) is a regression.
-      if (res.status !== 401) {
-        throw new Error(`expected 401 from bogus github token, got ${res.status}`)
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '')
+        throw new Error(`poll-reviews failed (${res.status}): ${errText.slice(0, 200)}`)
       }
-      const body = await res.json().catch(() => ({}))
-      if (body.code !== 'token_expired') {
-        throw new Error(`expected code=token_expired, got ${JSON.stringify(body)}`)
+      const body = await res.json()
+      if (!Array.isArray(body.removedPRIds) || !body.removedPRIds.includes(prId)) {
+        throw new Error(`expected removedPRIds to include ${prId}, got ${JSON.stringify(body.removedPRIds)}`)
+      }
+      if (body.removalReasons?.[prId] !== expectedReason) {
+        throw new Error(
+          `expected removalReasons[${prId}]=${expectedReason}, got ${JSON.stringify(body.removalReasons)}`,
+        )
+      }
+      const reviewedRows = await supabaseAdmin(
+        'GET',
+        `poll_reviewed_prs?github_user_id=eq.${syntheticGithubId}&pr_id=eq.${prId}`,
+      )
+      if (!Array.isArray(reviewedRows) || reviewedRows.length === 0) {
+        throw new Error('expected a row in poll_reviewed_prs for the fixture PR')
+      }
+      if (reviewedRows[0].review_state !== expectedReason) {
+        throw new Error(
+          `expected review_state=${expectedReason} in poll_reviewed_prs, got ${reviewedRows[0].review_state}`,
+        )
       }
     } finally {
+      await supabaseAdmin(
+        'DELETE',
+        `poll_reviewed_prs?github_user_id=eq.${syntheticGithubId}`,
+      ).catch(() => {})
+      await supabaseAdmin(
+        'DELETE',
+        `user_pr_snapshots?github_user_id=eq.${syntheticGithubId}`,
+      ).catch(() => {})
       await supabaseAdmin(
         'DELETE',
         `app_users?github_user_id=eq.${syntheticGithubId}`,
       ).catch(() => {})
     }
   })
+}
+
+if (SUPABASE_SERVICE_ROLE_KEY) {
+  await check('poll-reviews rejects a bogus test-fixture header without service-role auth', async () => {
+    const res = await fetch(`${base}/poll-reviews`, {
+      headers: {
+        Authorization: 'Bearer smoke-check-bogus-session-token',
+        'X-PR-Review-Test-Fixture': Buffer.from('{}').toString('base64'),
+        'X-PR-Review-Test-Auth': 'not-the-service-role-key',
+      },
+    })
+    if (res.status !== 401) throw new Error(`expected 401, got ${res.status}`)
+  })
+
+  await runOperatorScenario({
+    label: 'poll-reviews removes the card the moment an approval is detected',
+    reviewState: 'APPROVED',
+    expectedReason: 'approved',
+  })
+
+  await runOperatorScenario({
+    label: 'poll-reviews removes the card the moment changes-requested is detected',
+    reviewState: 'CHANGES_REQUESTED',
+    expectedReason: 'changes_requested',
+  })
+
+  await runOperatorScenario({
+    label: 'poll-reviews removes the card the moment a plain-comment review is detected',
+    reviewState: 'COMMENTED',
+    expectedReason: 'commented',
+  })
 } else {
-  console.log('  skip — live seeded-session poll-reviews check (SUPABASE_SERVICE_ROLE_KEY not set)')
+  console.log('  skip — operator-mode poll-reviews checks (SUPABASE_SERVICE_ROLE_KEY not set)')
 }
 
 if (failed > 0) {
