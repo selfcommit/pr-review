@@ -85,6 +85,8 @@ function DashboardPage() {
   const soundEnabledRef = useRef(soundEnabled)
   soundEnabledRef.current = soundEnabled
 
+  const loadPullRequestsRef = useRef<(() => Promise<void>) | null>(null)
+
   const audioUnlockReportedRef = useRef(false)
   const overdueNotifiedRef = useRef(new Set<number>())
 
@@ -183,11 +185,39 @@ function DashboardPage() {
 
   const pollingEnabled = !loading && !error && !!getSessionToken()
 
-  const { pause: pausePolling, resume: resumePolling } = usePolling({
+  const { pause: pausePolling, resume: resumePolling, status: pollingStatus } = usePolling({
     enabled: pollingEnabled,
     intervalMs: 5000,
     onChanges: handlePollChanges,
+    onResume: () => {
+      // When we come out of a rate-limit pause, kick a full refresh so the
+      // list snaps to reality instead of trusting whatever the paused window
+      // may have missed.
+      loadPullRequestsRef.current?.()
+    },
   })
+  const [pauseVisible, setPauseVisible] = useState(false)
+  const [pauseSecondsRemaining, setPauseSecondsRemaining] = useState<number | null>(null)
+  useEffect(() => {
+    if (!pollingStatus.paused || pollingStatus.resumeAt === null) {
+      setPauseVisible(false)
+      setPauseSecondsRemaining(null)
+      return
+    }
+    // Only surface the banner once the pause has lasted more than 30s so the
+    // brief pause during a manual refresh does not flash a banner.
+    const bannerAt = Date.now() + 30_000
+    const showTimer = setTimeout(() => setPauseVisible(true), Math.max(0, bannerAt - Date.now()))
+    const tick = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((pollingStatus.resumeAt! - Date.now()) / 1000))
+      setPauseSecondsRemaining(remaining)
+    }, 1000)
+    setPauseSecondsRemaining(Math.max(0, Math.ceil((pollingStatus.resumeAt - Date.now()) / 1000)))
+    return () => {
+      clearTimeout(showTimer)
+      clearInterval(tick)
+    }
+  }, [pollingStatus.paused, pollingStatus.resumeAt])
 
   const handleOAuthMessage = useCallback((event: MessageEvent) => {
     if (event.origin !== window.location.origin) return
@@ -260,8 +290,18 @@ function DashboardPage() {
       })
     }
 
+    let lastHiddenAt: number | null = null
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
+        // If the tab was hidden long enough that polling could have missed
+        // updates (or a rate-limit pause is holding tiles frozen), snap the
+        // full list back to reality with the same code path a manual refresh
+        // uses. This is the belt-and-braces backstop for any recover-from-
+        // pause bug we have not yet found.
+        if (lastHiddenAt !== null && Date.now() - lastHiddenAt > 60_000) {
+          loadPullRequestsRef.current?.()
+        }
+        lastHiddenAt = null
         unlockAudio()
         if (!isPrimed()) {
           primeAudio().then(ok => {
@@ -273,6 +313,8 @@ function DashboardPage() {
         } else if (isAudioUnlocked()) {
           reportAudioUnlocked()
         }
+      } else {
+        lastHiddenAt = Date.now()
       }
     }
 
@@ -396,6 +438,7 @@ function DashboardPage() {
 
     }
   }
+  loadPullRequestsRef.current = loadPullRequests
 
   const fetchPullRequests = loadPullRequests
 
@@ -470,6 +513,16 @@ function DashboardPage() {
               <div className="refresh-indicator" title="Refreshing from GitHub">
                 <div className="refresh-spinner"></div>
                 <span>Refreshing</span>
+              </div>
+            )}
+            {pauseVisible && !refreshing && (
+              <div className="refresh-indicator paused-indicator" title="Paused because of the GitHub rate limit">
+                <span>
+                  Paused
+                  {pauseSecondsRemaining !== null && pauseSecondsRemaining > 0
+                    ? ` — resuming in ${pauseSecondsRemaining}s`
+                    : ''}
+                </span>
               </div>
             )}
             {user && profileSettings && (
