@@ -37,11 +37,29 @@ const TRACKED_STATS = new Set(['approved', 'changes_requested', 'commented'])
 export function computePollEffects(state: PollState, result: PollInput): PollEffects {
   const notifications: PollNotification[] = []
   const highlightedIds: number[] = []
+  const announced = new Set<number>()
+  const knownIds = new Set(state.items.map(it => it.id as number))
+
+  const announceFreshArrival = (raw: Record<string, unknown>) => {
+    const prId = raw.id as number
+    if (announced.has(prId)) return
+    announced.add(prId)
+    const pr = mapItem(raw)
+    notifications.push({ prId, text: `${pr.repository.full_name}: ${pr.title}` })
+    highlightedIds.push(prId)
+  }
 
   for (const raw of result.newPRs) {
-    const pr = mapItem(raw)
-    notifications.push({ prId: pr.id, text: `${pr.repository.full_name}: ${pr.title}` })
-    highlightedIds.push(pr.id)
+    announceFreshArrival(raw)
+  }
+  // A brand-new review request that the server has previously written to its
+  // snapshot cache lands in updatedPRs, not newPRs. If our on-screen list has
+  // never seen the id, treat it as a fresh arrival so the card renders and
+  // the chime fires — otherwise the badge ticks up but the card is missing.
+  for (const raw of result.updatedPRs) {
+    if (!knownIds.has(raw.id as number)) {
+      announceFreshArrival(raw)
+    }
   }
 
   const overdueNotifiedAdditions: number[] = []
@@ -68,10 +86,18 @@ export function computePollEffects(state: PollState, result: PollInput): PollEff
 
   if (result.updatedPRs.length > 0) {
     const updatedMap = new Map(result.updatedPRs.map(pr => [pr.id as number, pr]))
+    const seen = new Set<number>()
     nextItems = nextItems.map(item => {
-      const upd = updatedMap.get(item.id as number)
-      return upd ? { ...item, ...upd } : item
+      const id = item.id as number
+      const upd = updatedMap.get(id)
+      if (!upd) return item
+      seen.add(id)
+      return { ...item, ...upd }
     })
+    const orphanArrivals = result.updatedPRs.filter(pr => !seen.has(pr.id as number))
+    if (orphanArrivals.length > 0) {
+      nextItems = [...orphanArrivals, ...nextItems]
+    }
   }
 
   const currentIdsBeforeRemoval = new Set(state.items.map(it => it.id as number))

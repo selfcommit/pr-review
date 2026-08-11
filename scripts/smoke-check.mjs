@@ -53,6 +53,85 @@ await check('protected route rejects requests without a session token', async ()
   if (!body.error) throw new Error('response missing error field')
 })
 
+await check('poll-reviews rejects requests without a session token', async () => {
+  const res = await fetch(`${base}/poll-reviews`)
+  if (res.status !== 401) throw new Error(`expected 401, got ${res.status}`)
+  const body = await res.json().catch(() => ({}))
+  if (!body.error) throw new Error('response missing error field')
+})
+
+await check('poll-reviews rejects a bogus session token with 401', async () => {
+  const res = await fetch(`${base}/poll-reviews`, {
+    headers: { Authorization: 'Bearer smoke-check-bogus-session-token' },
+  })
+  if (res.status !== 401) throw new Error(`expected 401, got ${res.status}`)
+})
+
+const SUPABASE_SERVICE_ROLE_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || envFile.SUPABASE_SERVICE_ROLE_KEY
+
+async function supabaseAdmin(method, path, body) {
+  if (!SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY not configured — cannot seed test user')
+  }
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: body != null ? JSON.stringify(body) : undefined,
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(`Supabase ${method} ${path} → ${res.status}: ${text.slice(0, 200)}`)
+  }
+  return text ? JSON.parse(text) : null
+}
+
+if (SUPABASE_SERVICE_ROLE_KEY) {
+  await check('poll-reviews accepts a live seeded session and returns the expected shape', async () => {
+    const stamp = Date.now()
+    const syntheticGithubId = 900000000 + (stamp % 1000000)
+    const sessionToken = `smoke-${stamp}-${Math.random().toString(36).slice(2, 10)}`
+    const login = `smoke-user-${stamp}`
+
+    await supabaseAdmin('POST', 'app_users', {
+      github_user_id: syntheticGithubId,
+      login,
+      name: 'Smoke Check User',
+      avatar_url: '',
+      access_token: 'smoke-check-bogus-github-token',
+      session_token: sessionToken,
+    })
+
+    try {
+      const res = await fetch(`${base}/poll-reviews`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      })
+      // The synthetic access token is not a real GitHub token, so the endpoint
+      // should surface GitHub's 401 as { code: "token_expired" }. Anything
+      // other than 401 (e.g. a 500 crash) is a regression.
+      if (res.status !== 401) {
+        throw new Error(`expected 401 from bogus github token, got ${res.status}`)
+      }
+      const body = await res.json().catch(() => ({}))
+      if (body.code !== 'token_expired') {
+        throw new Error(`expected code=token_expired, got ${JSON.stringify(body)}`)
+      }
+    } finally {
+      await supabaseAdmin(
+        'DELETE',
+        `app_users?github_user_id=eq.${syntheticGithubId}`,
+      ).catch(() => {})
+    }
+  })
+} else {
+  console.log('  skip — live seeded-session poll-reviews check (SUPABASE_SERVICE_ROLE_KEY not set)')
+}
+
 if (failed > 0) {
   console.error(`\nSMOKE FAIL: ${failed} check(s) failed`)
   process.exit(1)

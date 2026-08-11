@@ -147,6 +147,82 @@ describe('poll effects — visibility reconciliation', () => {
   })
 })
 
+// Regression coverage for the "tagged but no card appeared" bug: the badge
+// updated on its own while the review-requested list never re-rendered the
+// newly arrived pull request. Every scenario below reproduces one of the
+// server-response shapes that used to silently drop a fresh arrival.
+describe('poll effects — fresh arrivals must never be dropped', () => {
+  it('adds the card when the server bucketed it as updated but the client had never seen it', () => {
+    const effects = computePollEffects(
+      emptyState({ items: [] }),
+      emptyResult({ updatedPRs: [makeRaw(6984, { title: 'Ship live updates', repo: 'acme/dash' })] }),
+    )
+    const ids = effects.nextItems.map(i => (i as { id: number }).id)
+    expect(ids).toContain(6984)
+  })
+
+  it('fires a toast and highlight when a fresh arrival came in on the updated bucket', () => {
+    const effects = computePollEffects(
+      emptyState({ items: [] }),
+      emptyResult({ updatedPRs: [makeRaw(6984, { title: 'Ship live updates', repo: 'acme/dash' })] }),
+    )
+    expect(effects.notifications).toEqual([
+      { prId: 6984, text: 'acme/dash: Ship live updates' },
+    ])
+    expect(effects.highlightedIds).toEqual([6984])
+  })
+
+  it('never renders the same arrival twice when the server included it in both buckets', () => {
+    const raw = makeRaw(42)
+    const effects = computePollEffects(
+      emptyState(),
+      emptyResult({ newPRs: [raw], updatedPRs: [raw] }),
+    )
+    const ids = effects.nextItems.map(i => (i as { id: number }).id)
+    expect(ids.filter(id => id === 42)).toHaveLength(1)
+    expect(effects.notifications).toHaveLength(1)
+  })
+
+  it('does not swallow arrivals just because visibleIds also lists them', () => {
+    const raw = makeRaw(77)
+    const effects = computePollEffects(
+      emptyState(),
+      emptyResult({ newPRs: [raw], visibleIds: [77] }),
+    )
+    const ids = effects.nextItems.map(i => (i as { id: number }).id)
+    expect(ids).toEqual([77])
+  })
+
+  it('handles two consecutive polls each delivering a different fresh request', () => {
+    const first = computePollEffects(
+      emptyState(),
+      emptyResult({ newPRs: [makeRaw(1)] }),
+    )
+    const second = computePollEffects(
+      { items: first.nextItems, reviewTimestamps: {}, overdueNotified: new Set<number>() },
+      emptyResult({ updatedPRs: [makeRaw(2)] }),
+    )
+    const ids = second.nextItems.map(i => (i as { id: number }).id)
+    expect(ids).toContain(1)
+    expect(ids).toContain(2)
+    expect(second.notifications).toEqual([
+      { prId: 2, text: 'acme/widgets: PR 2' },
+    ])
+  })
+
+  it('still updates the existing card in place when the server bucketed a known id as updated', () => {
+    const existing = makeRaw(5, { title: 'Old title' })
+    const updated = makeRaw(5, { title: 'New title' })
+    const effects = computePollEffects(
+      emptyState({ items: [existing] }),
+      emptyResult({ updatedPRs: [updated] }),
+    )
+    expect(effects.nextItems).toHaveLength(1)
+    expect((effects.nextItems[0] as { title: string }).title).toBe('New title')
+    expect(effects.notifications).toHaveLength(0)
+  })
+})
+
 describe('poll effects — overdue transitions', () => {
   it('emits a toast when a card crosses the 24-hour mark', () => {
     const now = Date.now()

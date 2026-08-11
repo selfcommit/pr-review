@@ -6,6 +6,7 @@ import { primeAudio, playChime } from '../utils/notificationSound'
 import { useNow } from '../hooks/useNow'
 import PRCard from './PRCard'
 import DeclineReviewModal from './DeclineReviewModal'
+import { applyReviewFilters } from '../lib/reviewFilter'
 
 interface UrgencyGroup {
   label: string
@@ -96,21 +97,17 @@ function ReviewRequestedTab({
     })
   }
 
-  const allReviewPRs = reviewRequestedItems
-    .map(item => {
-      const pr = mapItem(item)
-      const ts = reviewTimestamps[pr.id]
-      if (ts) pr.review_requested_at = ts
-      return pr
-    })
-    .filter(pr => !locallyDeclinedIds.has(pr.id))
+  const allReviewPRs = reviewRequestedItems.map(item => {
+    const pr = mapItem(item)
+    const ts = reviewTimestamps[pr.id]
+    if (ts) pr.review_requested_at = ts
+    return pr
+  })
 
-  const draftCount = allReviewPRs.filter(pr => pr.draft).length
-  const afterDraftFilter = showDrafts ? allReviewPRs : allReviewPRs.filter(pr => !pr.draft)
-  const teamApprovedCount = afterDraftFilter.filter(pr => pr.team_approval_required === false).length
-  const reviewPRs = showTeamApproved
-    ? afterDraftFilter
-    : afterDraftFilter.filter(pr => pr.team_approval_required !== false)
+  const { visible: reviewPRs, draftCount, teamApprovedCount } = applyReviewFilters(
+    allReviewPRs,
+    { showDrafts, showTeamApproved, locallyDeclinedIds },
+  )
 
   const urgencyGroups = groupByUrgency(reviewPRs)
   const MAX_VISIBLE = 20
