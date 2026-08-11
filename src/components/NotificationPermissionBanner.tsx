@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { registerNotificationServiceWorker } from '../utils/browserNotification'
 
 interface NotificationPermissionBannerProps {
   soundEnabled: boolean
@@ -40,6 +41,7 @@ function NotificationPermissionBanner({ soundEnabled }: NotificationPermissionBa
       const result = await Notification.requestPermission()
       setPermission(result)
       if (result === 'granted') {
+        void registerNotificationServiceWorker()
         setVisible(false)
       }
     } catch {}

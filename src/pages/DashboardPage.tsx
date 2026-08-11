@@ -8,7 +8,7 @@ import { getCachedUser, setCachedUser, setSessionToken, logout, apiGet, apiPost,
 import { isInIframe } from '../utils/iframe'
 import { shouldUseNativeAuth, getNativeRedirectUrl, openNativeOAuth } from '../utils/nativeAuth'
 import { playChime, playRemovalTone, unlockAudio, isAudioUnlocked, preWarmAudio, primeAudio, isPrimed, stopKeepalive } from '../utils/notificationSound'
-import { sendBrowserNotification } from '../utils/browserNotification'
+import { sendBrowserNotification, registerNotificationServiceWorker } from '../utils/browserNotification'
 import { computePollEffects } from '../lib/pollEffects'
 import { shouldFireReadinessChime } from '../lib/readinessChime'
 import OrgAccessBanner from '../components/OrgAccessBanner'
@@ -365,11 +365,13 @@ function DashboardPage() {
           primeAudio().then(ok => {
             if (ok) {
               reportAudioUnlocked()
+              attemptReadinessChimeRef.current?.()
               removeGestureListeners()
             }
           })
-        } else if (isAudioUnlocked()) {
-          reportAudioUnlocked()
+        } else {
+          if (isAudioUnlocked()) reportAudioUnlocked()
+          attemptReadinessChimeRef.current?.()
         }
       } else {
         lastHiddenAt = Date.now()
@@ -390,6 +392,7 @@ function DashboardPage() {
             primeAudio().then(ok => {
               if (ok) {
                 reportAudioUnlocked()
+                attemptReadinessChimeRef.current?.()
                 removeGestureListeners()
               }
             })
@@ -551,6 +554,7 @@ function DashboardPage() {
     const silent = soundEnabledRef.current ? chimeSucceeded : true
     const title = 'Test review request'
     const body = 'octocat/hello-world#99 - Fix the widget'
+    await registerNotificationServiceWorker()
     sendBrowserNotification(title, body, undefined, 'test-notification', silent, {
       desktopEnabled: desktopEnabledRef.current,
     })

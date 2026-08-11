@@ -33,9 +33,6 @@ export function useNotificationPreference() {
   const [desktopEnabled, setDesktopEnabledState] = useState(() => readBool(DESKTOP_KEY))
 
   useEffect(() => {
-    if (soundEnabled || desktopEnabled) {
-      requestNotificationPermission()
-    }
     if (!getSessionToken()) return
     let cancelled = false
     apiGet<AudioStateResponse>('audio-state')
@@ -49,9 +46,6 @@ export function useNotificationPreference() {
           setDesktopEnabledState(state.desktop_notifications_enabled)
           writeLocal(DESKTOP_KEY, state.desktop_notifications_enabled)
         }
-        if (state.sound_enabled || state.desktop_notifications_enabled) {
-          requestNotificationPermission()
-        }
       })
       .catch(() => {})
     return () => {
@@ -62,7 +56,6 @@ export function useNotificationPreference() {
   const setSoundEnabled = useCallback((value: boolean) => {
     setSoundEnabledState(value)
     writeLocal(SOUND_KEY, value)
-    if (value) requestNotificationPermission()
     if (getSessionToken()) {
       apiPost('audio-state', { sound_enabled: value }).catch(() => {})
     }
@@ -71,7 +64,7 @@ export function useNotificationPreference() {
   const setDesktopEnabled = useCallback((value: boolean) => {
     setDesktopEnabledState(value)
     writeLocal(DESKTOP_KEY, value)
-    if (value) requestNotificationPermission()
+    if (value) void requestNotificationPermission()
     if (getSessionToken()) {
       apiPost('audio-state', { desktop_notifications_enabled: value }).catch(() => {})
     }

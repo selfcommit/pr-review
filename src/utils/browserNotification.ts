@@ -50,13 +50,22 @@ export function registerNotificationServiceWorker(): Promise<ServiceWorkerRegist
   return swRegisterPromise
 }
 
-export function requestNotificationPermission(): void {
-  if (isNativeApp()) return
-  if (!('Notification' in window)) return
-  if (Notification.permission === 'default') {
-    Notification.requestPermission().catch(() => {})
-  }
+// Ask the browser for notification permission AND kick off the service worker
+// registration. Both consume a browser user-activation budget, so this must
+// only be called from a real user gesture — never at page mount, or it races
+// with the readiness-chime autoplay attempt and silences it.
+export async function requestNotificationPermission(): Promise<NotificationPermission | null> {
+  if (isNativeApp()) return null
+  if (!('Notification' in window)) return null
   void registerNotificationServiceWorker()
+  if (Notification.permission === 'default') {
+    try {
+      return await Notification.requestPermission()
+    } catch {
+      return Notification.permission
+    }
+  }
+  return Notification.permission
 }
 
 export function getNotificationPermission(): NotificationPermission | null {
