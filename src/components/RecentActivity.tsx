@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiGet } from '../utils/api'
 import { formatWaitTime } from '../utils/time'
+import { useNow } from '../hooks/useNow'
 import type { ActivityEvent, ActivityEventType, ActivityResponse } from '../types/activity'
 
 const EVENT_LABELS: Record<ActivityEventType, string> = {
@@ -21,6 +22,7 @@ function RecentActivity() {
   const [activeFilters, setActiveFilters] = useState<Set<ActivityEventType>>(
     () => new Set(['approved', 'changes_requested', 'commented', 'declined'])
   )
+  useNow(30000)
 
   const load = async (windowDays: number, isExpand = false) => {
     try {

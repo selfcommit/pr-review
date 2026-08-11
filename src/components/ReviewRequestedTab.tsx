@@ -3,6 +3,7 @@ import type { PullRequest } from '../types/pullRequest'
 import { mapItem } from '../types/pullRequest'
 import { isOverdue } from '../utils/time'
 import { primeAudio, playChime } from '../utils/notificationSound'
+import { useNow } from '../hooks/useNow'
 import PRCard from './PRCard'
 import DeclineReviewModal from './DeclineReviewModal'
 
@@ -82,6 +83,7 @@ function ReviewRequestedTab({
   const [showTeamApproved, setShowTeamApproved] = useState(readTeamApprovedFilter)
   const [decliningPr, setDecliningPr] = useState<PullRequest | null>(null)
   const [locallyDeclinedIds, setLocallyDeclinedIds] = useState<Set<number>>(new Set())
+  useNow(30000)
 
   const toggleTeamApproved = () => {
     setShowTeamApproved(prev => {

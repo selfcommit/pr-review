@@ -10,6 +10,7 @@ interface PollResult {
   removalReasons: Record<number, string>
   newPRs: Array<Record<string, unknown>>
   reviewTimestamps: Record<number, string>
+  visibleIds?: number[]
   rateLimitRemaining: string | null
   rateLimitReset: string | null
 }
@@ -62,7 +63,8 @@ export function usePolling({ enabled, intervalMs = 60000, fullCheckEveryN = 6, o
         }
       }
 
-      if (result.changed || (result.removedPRIds && result.removedPRIds.length > 0)) {
+      const hasVisibleIds = Array.isArray(result.visibleIds)
+      if (result.changed || (result.removedPRIds && result.removedPRIds.length > 0) || hasVisibleIds) {
         try {
           await onChangesRef.current(result)
         } catch (err) {

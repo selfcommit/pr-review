@@ -3009,10 +3009,12 @@ Deno.serve(async (req: Request) => {
           if (!res) continue;
           if (res.reviewed) {
             reviewedIds.add(item.id);
-            // Only announce a removal (UI drop + tone) when the card is
-            // actually leaving the on-screen list this cycle.
-            if (snapMap.has(item.id)) removedPrIds.push(item.id);
-            // Count the review toward stats only the first time we detect it.
+            // Always announce the removal so the browser drops the card even
+            // if the server never had a snapshot for it (e.g. dismiss + re-request).
+            // The browser filter is idempotent when the card isn't on screen.
+            removedPrIds.push(item.id);
+            // Count the review toward stats and play the chime only the first
+            // time we detect the transition into "reviewed".
             if (!previouslyReviewedIds.has(item.id)) {
               removalReasons[item.id] = res.state;
               newlyReviewedRows.push({
@@ -3213,6 +3215,8 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      const visibleIds = (freshItems as GitHubSearchItem[]).map((it) => it.id);
+
       return jsonResponse({
         changed,
         updatedPRs: updatedItems,
@@ -3220,6 +3224,7 @@ Deno.serve(async (req: Request) => {
         removalReasons,
         newPRs: newItems,
         reviewTimestamps: newReviewTimestamps,
+        visibleIds,
         rateLimitRemaining,
         rateLimitReset,
       });

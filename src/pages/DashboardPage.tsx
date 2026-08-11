@@ -122,6 +122,7 @@ function DashboardPage() {
     removalReasons?: Record<number, string>
     newPRs: Array<Record<string, unknown>>
     reviewTimestamps: Record<number, string>
+    visibleIds?: number[]
   }) => {
     const notifyPrIds: number[] = []
     const messages: ToastMessage[] = []
@@ -171,17 +172,22 @@ function DashboardPage() {
       for (const id of result.removedPRIds) {
         overdueNotifiedRef.current.delete(id)
       }
+      const reasons = result.removalReasons || {}
+      const currentIds = new Set(reviewRequestedItemsRef.current.map(it => it.id as number))
+      // Only chime + count stats for cards that were actually on screen and
+      // are being flagged as newly reviewed this cycle (removalReasons entry).
+      const newlyReviewedOnScreen = result.removedPRIds.filter(id => reasons[id] && currentIds.has(id))
       setReviewRequestedItems(prev =>
         prev.filter(item => !removedSet.has(item.id as number))
       )
 
-      if (soundEnabledRef.current) {
-        playRemovalTone()
-      }
-
-      if (result.removalReasons) {
+      if (newlyReviewedOnScreen.length > 0) {
+        if (soundEnabledRef.current) {
+          playRemovalTone()
+        }
         const counts: Record<string, number> = {}
-        for (const state of Object.values(result.removalReasons)) {
+        for (const id of newlyReviewedOnScreen) {
+          const state = reasons[id]
           counts[state] = (counts[state] || 0) + 1
         }
         for (const [state, count] of Object.entries(counts)) {
@@ -190,6 +196,14 @@ function DashboardPage() {
           }
         }
       }
+    }
+
+    if (Array.isArray(result.visibleIds)) {
+      const visibleSet = new Set(result.visibleIds)
+      setReviewRequestedItems(prev => {
+        const filtered = prev.filter(item => visibleSet.has(item.id as number))
+        return filtered.length === prev.length ? prev : filtered
+      })
     }
 
     if (Object.keys(result.reviewTimestamps).length > 0) {
