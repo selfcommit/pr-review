@@ -3578,29 +3578,32 @@ Deno.serve(async (req: Request) => {
       if (req.method === "GET") {
         const { data: state } = await supabase
           .from("user_audio_state")
-          .select("audio_unlocked, last_unlocked_at")
+          .select("audio_unlocked, last_unlocked_at, sound_enabled")
           .eq("github_user_id", user.github_user_id)
           .maybeSingle();
 
         return jsonResponse({
           audio_unlocked: state?.audio_unlocked ?? false,
           last_unlocked_at: state?.last_unlocked_at ?? null,
+          sound_enabled: state?.sound_enabled ?? null,
         });
       }
 
       if (req.method === "POST") {
         const body = await req.json().catch(() => ({}));
-        const audioUnlocked = body?.audio_unlocked === true;
+        const patch: Record<string, unknown> = {
+          github_user_id: user.github_user_id,
+          updated_at: new Date().toISOString(),
+        };
+        if (typeof body?.audio_unlocked === "boolean") {
+          patch.audio_unlocked = body.audio_unlocked;
+          if (body.audio_unlocked) patch.last_unlocked_at = new Date().toISOString();
+        }
+        if (typeof body?.sound_enabled === "boolean") {
+          patch.sound_enabled = body.sound_enabled;
+        }
 
-        await supabase.from("user_audio_state").upsert(
-          {
-            github_user_id: user.github_user_id,
-            audio_unlocked: audioUnlocked,
-            last_unlocked_at: audioUnlocked ? new Date().toISOString() : null,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "github_user_id" }
-        );
+        await supabase.from("user_audio_state").upsert(patch, { onConflict: "github_user_id" });
 
         return jsonResponse({ success: true });
       }

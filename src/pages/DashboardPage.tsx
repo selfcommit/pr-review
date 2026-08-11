@@ -10,6 +10,7 @@ import { shouldUseNativeAuth, getNativeRedirectUrl, openNativeOAuth } from '../u
 import { playChime, playRemovalTone, unlockAudio, isAudioUnlocked, preWarmAudio, primeAudio, isPrimed, stopKeepalive } from '../utils/notificationSound'
 import { sendBrowserNotification } from '../utils/browserNotification'
 import { computePollEffects } from '../lib/pollEffects'
+import { shouldFireReadinessChime } from '../lib/readinessChime'
 import OrgAccessBanner from '../components/OrgAccessBanner'
 import OrganizationsTab from '../components/OrganizationsTab'
 import ReviewRequestedTab from '../components/ReviewRequestedTab'
@@ -89,6 +90,8 @@ function DashboardPage() {
 
   const audioUnlockReportedRef = useRef(false)
   const overdueNotifiedRef = useRef(new Set<number>())
+  const readinessChimeFiredRef = useRef(false)
+  const attemptReadinessChimeRef = useRef<(() => void) | null>(null)
 
   const reportAudioUnlocked = useCallback(() => {
     if (audioUnlockReportedRef.current) return
@@ -98,6 +101,39 @@ function DashboardPage() {
       audioUnlockReportedRef.current = false
     })
   }, [])
+
+  const attemptReadinessChime = useCallback(async () => {
+    if (
+      !shouldFireReadinessChime({
+        initialLoadComplete: !loading && !error,
+        soundEnabled: soundEnabledRef.current,
+        alreadyFired: readinessChimeFiredRef.current,
+      })
+    ) {
+      return
+    }
+    try {
+      await primeAudio()
+      const ok = await playChime()
+      if (ok) {
+        readinessChimeFiredRef.current = true
+        reportAudioUnlocked()
+      }
+    } catch {
+      // Kept armed: the retry on the first real user interaction will try again.
+    }
+  }, [loading, error, reportAudioUnlocked])
+
+  attemptReadinessChimeRef.current = () => {
+    void attemptReadinessChime()
+  }
+
+  useEffect(() => {
+    if (loading || error) return
+    if (!soundEnabled) return
+    if (readinessChimeFiredRef.current) return
+    void attemptReadinessChime()
+  }, [loading, error, soundEnabled, attemptReadinessChime])
 
   const scrollToPR = useCallback((prId: number) => {
     const el = document.getElementById(`pr-${prId}`)
@@ -279,6 +315,7 @@ function DashboardPage() {
 
     const handleGesture = () => {
       if (isPrimed()) {
+        attemptReadinessChimeRef.current?.()
         removeGestureListeners()
         return
       }
@@ -286,6 +323,7 @@ function DashboardPage() {
       primeAudio().then(ok => {
         if (ok) {
           reportAudioUnlocked()
+          attemptReadinessChimeRef.current?.()
           removeGestureListeners()
         }
       })
