@@ -92,14 +92,15 @@ export function StatRow({
     </span>
   ) : null
 
+  const p90OverTarget = summary.p90_latency_seconds != null && summary.p90_latency_seconds > ON_TARGET_SECONDS
   const p90Sublabel = (
     <>
-      {hasTimed && (
+      {hasTimed && !p90OverTarget && (
         <span className="stat-card-sublabel-accent">
           {formatPercent(onTargetCount, timedPrs.length)} of your reviews took less than 24 hours
         </span>
       )}
-      {needsMoreLine}
+      {p90OverTarget && needsMoreLine}
       {repoP90Line}
     </>
   )
