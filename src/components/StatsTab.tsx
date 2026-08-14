@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react'
 import { RepoStats, StatsPR, StatsSummary, formatLatency } from '../types/stats'
 import { useStats } from '../hooks/useStats'
 import { useProfileVisibility } from '../hooks/useProfileVisibility'
+import { reviewsNeededToBringP90Under } from '../lib/p90Target'
 
 type StatTone = 'green' | 'amber' | 'red' | 'blue' | 'slate'
 
@@ -81,6 +82,13 @@ export function StatRow({
     </span>
   ) : null
 
+  const reviewsNeeded = reviewsNeededToBringP90Under(includedPrs.map(p => p.latency_seconds))
+  const needsMoreLine = reviewsNeeded != null && reviewsNeeded > 0 ? (
+    <span className="stat-card-sublabel-accent">
+      {reviewsNeeded} more under-24h {reviewsNeeded === 1 ? 'review' : 'reviews'} needed to bring P90 under 24 hours
+    </span>
+  ) : null
+
   const p90Sublabel = (
     <>
       {hasTimed && (
@@ -88,6 +96,7 @@ export function StatRow({
           {formatPercent(onTargetCount, timedPrs.length)} of your reviews took less than 24 hours
         </span>
       )}
+      {needsMoreLine}
       {repoP90Line}
     </>
   )
