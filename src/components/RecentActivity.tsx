@@ -11,7 +11,7 @@ const EVENT_LABELS: Record<ActivityEventType, string> = {
   declined: 'Declined',
 }
 
-const WINDOW_STEPS = [7, 14, 30, 60, 120]
+const WINDOW_STEPS = [7, 14, 30]
 
 function RecentActivity() {
   const [events, setEvents] = useState<ActivityEvent[]>([])
@@ -64,12 +64,12 @@ function RecentActivity() {
     const currentIdx = WINDOW_STEPS.indexOf(days)
     const nextDays = currentIdx >= 0 && currentIdx < WINDOW_STEPS.length - 1
       ? WINDOW_STEPS[currentIdx + 1]
-      : Math.min(days * 2, 120)
+      : Math.min(days * 2, 30)
     load(nextDays, true)
   }
 
   const filteredEvents = events.filter(e => activeFilters.has(e.event_type))
-  const canLoadMore = days < 120
+  const canLoadMore = days < 30
 
   if (loading) {
     return (

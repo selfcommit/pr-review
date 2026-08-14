@@ -512,7 +512,7 @@ async function getArchivedRepos(
   return archivedSet;
 }
 
-const STATS_WINDOW_DAYS = 120;
+const STATS_WINDOW_DAYS = 30;
 const STATS_BACKFILL_TTL_MS = 30 * 60 * 1000;
 const COMMENT_RECHECK_TTL_MS = 5 * 60 * 1000;
 

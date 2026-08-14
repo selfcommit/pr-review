@@ -162,7 +162,7 @@ function PublicProfilePage() {
 }
 
 function PublicProfileContent({ data }: { data: PublicProfileResponse }) {
-  const windowDays = data.window_days ?? 120
+  const windowDays = data.window_days ?? 30
   const summary = data.summary
   const prs = summary.prs || []
 

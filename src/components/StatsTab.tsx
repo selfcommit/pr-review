@@ -401,7 +401,7 @@ function StatsTab() {
     )
   }
 
-  const windowDays = data?.window_days ?? 120
+  const windowDays = data?.window_days ?? 30
 
   if (!data || (data.summary.total_reviews === 0 && data.summary.declined === 0)) {
     return (

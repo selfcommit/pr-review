@@ -15,14 +15,14 @@ const EMPTY_SUMMARY: StatsResponse = {
     excluded_prs: [],
   },
   repos: [],
-  window_days: 120,
+  window_days: 30,
 }
 
 function OverallStatsBar() {
   const { data, refreshing, refresh } = useStats()
   const resolved = data ?? EMPTY_SUMMARY
 
-  const windowDays = resolved.window_days ?? 120
+  const windowDays = resolved.window_days ?? 30
   const summary = resolved.summary
   const prs = summary.prs || []
   const excludedPrs = summary.excluded_prs || []
