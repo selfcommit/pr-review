@@ -61,17 +61,20 @@ export function StatRow({
   summary,
   sampleLabel,
   includedPrs,
+  excludedPrs,
   repoP90LatencySeconds,
   repoLatencySampleSize,
 }: {
   summary: StatsSummary
   sampleLabel?: string
   includedPrs: { latency_seconds: number | null }[]
+  excludedPrs?: { latency_seconds: number | null }[]
   repoP90LatencySeconds?: number | null
   repoLatencySampleSize?: number
 }) {
   const total = summary.approved + summary.changes_requested + summary.declined
-  const timedPrs = includedPrs.filter((p): p is { latency_seconds: number } => p.latency_seconds !== null)
+  const allPrs = [...includedPrs, ...(excludedPrs || [])]
+  const timedPrs = allPrs.filter((p): p is { latency_seconds: number } => p.latency_seconds !== null)
   const onTargetCount = timedPrs.filter(p => p.latency_seconds <= ON_TARGET_SECONDS).length
   const hasTimed = timedPrs.length > 0
 
@@ -82,7 +85,7 @@ export function StatRow({
     </span>
   ) : null
 
-  const reviewsNeeded = reviewsNeededToBringP90Under(includedPrs.map(p => p.latency_seconds))
+  const reviewsNeeded = reviewsNeededToBringP90Under(allPrs.map(p => p.latency_seconds))
   const needsMoreLine = reviewsNeeded != null && reviewsNeeded > 0 ? (
     <span className="stat-card-sublabel-accent">
       {reviewsNeeded} more under-24h {reviewsNeeded === 1 ? 'review' : 'reviews'} needed to bring P90 under 24 hours
@@ -283,6 +286,7 @@ function RepoStatsCard({ repo }: { repo: RepoStats }) {
           latency_sample_size: repo.latency_sample_size,
         }}
         includedPrs={repo.prs || []}
+        excludedPrs={repo.excluded_prs || []}
         repoP90LatencySeconds={repo.repo_p90_latency_seconds}
         repoLatencySampleSize={repo.repo_latency_sample_size}
       />

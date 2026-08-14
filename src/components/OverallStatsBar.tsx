@@ -43,6 +43,7 @@ function OverallStatsBar() {
         summary={summary}
         sampleLabel={`${summary.latency_sample_size} samples`}
         includedPrs={prs}
+        excludedPrs={excludedPrs}
       />
       <PrDrawer
         prs={prs}
