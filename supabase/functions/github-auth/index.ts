@@ -3945,6 +3945,63 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    if (path === "revoke-access") {
+      if (req.method !== "POST") {
+        return jsonResponse({ error: "Method not allowed" }, 405);
+      }
+
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader?.startsWith("Bearer ")) {
+        return jsonResponse({ error: "Missing session token" }, 401);
+      }
+
+      const sessionToken = authHeader.replace("Bearer ", "");
+      const supabase = getSupabaseAdmin();
+
+      const { data: user } = await supabase
+        .from("app_users")
+        .select("access_token")
+        .eq("session_token", sessionToken)
+        .maybeSingle();
+
+      if (!user) {
+        return jsonResponse({ error: "Invalid session" }, 401);
+      }
+
+      const clientId = Deno.env.get("GITHUB_CLIENT_ID");
+      const clientSecret = Deno.env.get("GITHUB_CLIENT_SECRET");
+      if (!clientId || !clientSecret) {
+        return jsonResponse({ error: "oauth_not_configured" }, 500);
+      }
+
+      if (user.access_token) {
+        try {
+          const basic = btoa(`${clientId}:${clientSecret}`);
+          const revokeResp = await fetch(
+            `https://api.github.com/applications/${clientId}/grant`,
+            {
+              method: "DELETE",
+              headers: {
+                Authorization: `Basic ${basic}`,
+                Accept: "application/vnd.github+json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ access_token: user.access_token }),
+            }
+          );
+          if (!revokeResp.ok && revokeResp.status !== 404) {
+            console.error(
+              `[revoke-access] GitHub grant revoke returned ${revokeResp.status}`
+            );
+          }
+        } catch (e) {
+          console.error("[revoke-access] Failed to revoke grant", e);
+        }
+      }
+
+      return jsonResponse({ success: true });
+    }
+
     if (path === "logout") {
       if (req.method !== "POST") {
         return jsonResponse({ error: "Method not allowed" }, 405);

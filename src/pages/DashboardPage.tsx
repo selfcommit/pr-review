@@ -70,6 +70,8 @@ function DashboardPage() {
   const [activeTab, setActiveTab] = useState<TabId>('pull-requests')
   const [prSubTab, setPrSubTab] = useState<PRSubTab>('review-requested')
   const { orgAccess, fetchOrgs, toggleOrgExclusion } = useOrgAccess()
+  const [showReconnectConfirm, setShowReconnectConfirm] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
   const { soundEnabled, setSoundEnabled, desktopEnabled, setDesktopEnabled } = useNotificationPreference()
   const { settings: profileSettings } = useProfileVisibility()
 
@@ -289,7 +291,9 @@ function DashboardPage() {
       sessionStorage.removeItem('github_oauth_state')
       setUser(parsed)
       loadPullRequests()
-      fetchOrgs()
+      const reconnected = sessionStorage.getItem('org_reconnect_pending') === 'true'
+      sessionStorage.removeItem('org_reconnect_pending')
+      fetchOrgs(reconnected)
     }
   }, [fetchOrgs])
 
@@ -299,7 +303,9 @@ function DashboardPage() {
       setUser(cached)
     }
     loadPullRequests()
-    fetchOrgs()
+    const reconnected = sessionStorage.getItem('org_reconnect_pending') === 'true'
+    sessionStorage.removeItem('org_reconnect_pending')
+    fetchOrgs(reconnected)
     apiGet<GitHubUser>('me')
       .then(me => {
         setUser(me)
@@ -508,7 +514,12 @@ function DashboardPage() {
     navigate('/')
   }
 
-  const handleManageOrgAccess = async () => {
+  const handleManageOrgAccess = () => {
+    setShowReconnectConfirm(true)
+  }
+
+  const startGitHubReconnect = async () => {
+    setReconnecting(true)
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
     const useNative = shouldUseNativeAuth()
     const origin = window.location.origin
@@ -517,22 +528,31 @@ function DashboardPage() {
     const loginUrl = `${supabaseUrl}/functions/v1/github-auth/login?redirect_to=${redirectTo}`
 
     try {
+      await apiPost('revoke-access')
+
       const response = await fetch(loginUrl)
       const data = await response.json()
 
       if (data.url) {
         sessionStorage.setItem('github_oauth_state', data.state)
+        sessionStorage.setItem('org_reconnect_pending', 'true')
 
         if (useNative) {
           await openNativeOAuth(data.url)
+          setReconnecting(false)
+          setShowReconnectConfirm(false)
         } else if (isInIframe()) {
           window.open(data.url, 'github-oauth', 'width=600,height=700,menubar=no,toolbar=no')
+          setReconnecting(false)
+          setShowReconnectConfirm(false)
         } else {
           window.location.href = data.url
         }
+      } else {
+        setReconnecting(false)
       }
     } catch {
-      // silently fail -- user can retry
+      setReconnecting(false)
     }
   }
 
@@ -832,6 +852,65 @@ function DashboardPage() {
           )}
         </div>
       </main>
+
+      {showReconnectConfirm && (
+        <div
+          className="decline-modal-overlay"
+          onClick={() => { if (!reconnecting) setShowReconnectConfirm(false) }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="decline-modal" onClick={e => e.stopPropagation()}>
+            <div className="decline-modal-header">
+              <div className="decline-modal-title">
+                <span className="decline-modal-emoji" aria-hidden="true">&#x1F517;</span>
+                <div>
+                  <h2>Manage organization access</h2>
+                  <p className="decline-modal-subtitle">
+                    You'll be sent to GitHub to reconnect this app.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="decline-modal-close"
+                onClick={() => setShowReconnectConfirm(false)}
+                aria-label="Close"
+                disabled={reconnecting}
+              >
+                &times;
+              </button>
+            </div>
+            <div className="decline-modal-body">
+              <p className="decline-modal-label">
+                To change which organizations this app can see, GitHub needs to ask you
+                again. We'll disconnect the app from your GitHub account and send you
+                straight to GitHub's approval page, where you can grant or remove access
+                for each organization. When you come back, your dashboard updates with the
+                changes.
+              </p>
+              <div className="decline-modal-actions">
+                <button
+                  type="button"
+                  className="decline-modal-cancel"
+                  onClick={() => setShowReconnectConfirm(false)}
+                  disabled={reconnecting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="decline-modal-submit"
+                  onClick={startGitHubReconnect}
+                  disabled={reconnecting}
+                >
+                  {reconnecting ? 'Redirecting...' : 'Continue to GitHub'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
