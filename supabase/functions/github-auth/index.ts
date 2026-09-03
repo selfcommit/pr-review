@@ -1548,7 +1548,15 @@ async function fetchTeamApprovalStatus(
         (review: { state?: string }) => review.state === "CHANGES_REQUESTED"
       );
 
-      if (hasChangesRequested) {
+      // Only suppress the card when there is no active re-request aimed at the
+      // viewer. An individual re-request or a pending request to one of the
+      // viewer's own teams means the card must resurface regardless of whatever
+      // review state they (or anyone else) last submitted.
+      const hasActivePendingRequest =
+        individuallyRequested ||
+        [...relevantTeams].some((key) => pendingTeamKeys.has(key));
+
+      if (hasChangesRequested && !hasActivePendingRequest) {
         result[item.id] = { team_approval_required: false };
         return;
       }
