@@ -3235,7 +3235,18 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      const itemsNeedingApproval = [...newItems, ...updatedItems];
+      // Run approval status for ALL fresh items, not only new/updated ones.
+      // A review re-request does not change any snapshot field (title, state,
+      // draft, updated_at), so without this an unchanged card's
+      // team_approval_required would never be refreshed after a re-request.
+      const newOrUpdatedIds = new Set<number>([
+        ...newItems.map((i) => i.id),
+        ...updatedItems.map((i) => i.id),
+      ]);
+      const unchangedItems = (freshItems as GitHubSearchItem[]).filter(
+        (i) => !newOrUpdatedIds.has(i.id)
+      );
+      const itemsNeedingApproval = [...newItems, ...updatedItems, ...unchangedItems];
       if (itemsNeedingApproval.length > 0) {
         const approvalStatus = await fetchTeamApprovalStatus(
           user.access_token,
@@ -3252,6 +3263,13 @@ Deno.serve(async (req: Request) => {
         }
         for (const item of updatedItems as Array<GitHubSearchItem & { team_approval_required?: boolean }>) {
           applyApproval(item);
+        }
+        // Push unchanged items into updatedItems so the client receives the
+        // corrected team_approval_required and can immediately un-hide any card
+        // that a re-request has made actionable again.
+        for (const item of unchangedItems as Array<GitHubSearchItem & { team_approval_required?: boolean }>) {
+          applyApproval(item);
+          updatedItems.push(item as GitHubSearchItem);
         }
       }
 
