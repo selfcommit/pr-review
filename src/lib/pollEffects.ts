@@ -44,6 +44,10 @@ export function computePollEffects(state: PollState, result: PollInput): PollEff
     const prId = raw.id as number
     if (announced.has(prId)) return
     announced.add(prId)
+    // Don't notify for items the user cannot yet act on (drafts) or that are
+    // already hidden behind a filter (team already approved). The card still
+    // enters the list so toggling those filters shows it without a delay.
+    if (raw.draft === true || raw.team_approval_required === false) return
     const pr = mapItem(raw)
     notifications.push({ prId, text: `${pr.repository.full_name}: ${pr.title}` })
     highlightedIds.push(prId)

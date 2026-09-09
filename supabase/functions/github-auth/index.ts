@@ -2909,6 +2909,33 @@ Deno.serve(async (req: Request) => {
         rateLimitRemaining = searchResp.headers.get("X-RateLimit-Remaining") || null;
         rateLimitReset = searchResp.headers.get("X-RateLimit-Reset") || null;
 
+        if (!searchResp.ok) {
+          // GitHub secondary rate limits (403/429) and other transient errors
+          // include a Retry-After header specifying how many seconds to wait.
+          // Return a pause signal using the existing rateLimitRemaining=0
+          // mechanism so the client backs off gracefully and keeps its current
+          // card list intact, rather than treating an empty result as
+          // "all PRs disappeared".
+          const retryAfterSec = searchResp.headers.get("Retry-After");
+          const retryAfterReset = retryAfterSec
+            ? String(Math.ceil(Date.now() / 1000) + parseInt(retryAfterSec, 10))
+            : null;
+          console.warn(
+            `[poll-reviews] GitHub search returned ${searchResp.status}; Retry-After=${retryAfterSec ?? "none"}`
+          );
+          return jsonResponse({
+            changed: false,
+            updatedPRs: [],
+            removedPRIds: [],
+            removalReasons: {},
+            newPRs: [],
+            reviewTimestamps: {},
+            visibleIds: null,
+            rateLimitRemaining: "0",
+            rateLimitReset: retryAfterReset ?? rateLimitReset,
+          });
+        }
+
         const searchRaw = await searchResp.json();
         const searchResult =
           searchRaw && typeof searchRaw === "object"

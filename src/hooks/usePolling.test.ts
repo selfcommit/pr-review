@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest'
 import {
   computePauseDelayMs,
   computeNextIntervalMs,
+  computeErrorIntervalMs,
   PAUSE_FALLBACK_MS,
   RATE_LIMIT_PAUSE_THRESHOLD,
   IDLE_BACKOFF_STEPS,
   HIDDEN_INTERVAL_MS,
+  ERROR_BACKOFF_CAP_MS,
 } from './usePolling'
 
 // Regression: PR dashboard tiles froze until page refresh, and a follow-up
@@ -74,5 +76,33 @@ describe('computeNextIntervalMs — spend less budget when nothing is changing',
   it('drops to a slow heartbeat when the tab is hidden', () => {
     expect(computeNextIntervalMs(base, 0, true)).toBe(HIDDEN_INTERVAL_MS)
     expect(computeNextIntervalMs(base, 999, true)).toBe(HIDDEN_INTERVAL_MS)
+  })
+})
+
+describe('computeErrorIntervalMs — back off when polls keep failing', () => {
+  const base = 5000
+
+  it('returns the base interval with zero errors', () => {
+    expect(computeErrorIntervalMs(base, 0)).toBe(base)
+  })
+
+  it('keeps the same pace after the first error (1× — single blips should not slow things down)', () => {
+    expect(computeErrorIntervalMs(base, 1)).toBe(base)
+  })
+
+  it('doubles after the second consecutive error', () => {
+    expect(computeErrorIntervalMs(base, 2)).toBe(base * 2)
+  })
+
+  it('grows exponentially with each additional failure', () => {
+    const second = computeErrorIntervalMs(base, 2)
+    const third = computeErrorIntervalMs(base, 3)
+    const fourth = computeErrorIntervalMs(base, 4)
+    expect(third).toBeGreaterThan(second)
+    expect(fourth).toBeGreaterThan(third)
+  })
+
+  it('is capped at ERROR_BACKOFF_CAP_MS regardless of error count', () => {
+    expect(computeErrorIntervalMs(base, 999)).toBe(ERROR_BACKOFF_CAP_MS)
   })
 })

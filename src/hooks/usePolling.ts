@@ -54,6 +54,21 @@ export function computePauseDelayMs(
 export const IDLE_BACKOFF_STEPS = [1, 2, 4, 8, 12]
 export const HIDDEN_INTERVAL_MS = 60_000
 
+// Backoff multipliers for consecutive poll errors. The first error keeps the
+// same tempo (1×) so a single blip doesn't slow anything down; subsequent
+// failures double the interval up to a 5-minute ceiling.
+export const ERROR_BACKOFF_STEPS = [1, 2, 4, 8, 16, 32, 64]
+export const ERROR_BACKOFF_CAP_MS = 5 * 60_000
+
+export function computeErrorIntervalMs(
+  baseIntervalMs: number,
+  consecutiveErrors: number,
+): number {
+  if (consecutiveErrors <= 0) return baseIntervalMs
+  const stepIdx = Math.min(ERROR_BACKOFF_STEPS.length - 1, consecutiveErrors - 1)
+  return Math.min(ERROR_BACKOFF_CAP_MS, baseIntervalMs * ERROR_BACKOFF_STEPS[stepIdx])
+}
+
 export function computeNextIntervalMs(
   baseIntervalMs: number,
   consecutiveIdlePolls: number,
@@ -178,6 +193,13 @@ export function usePolling({
       consecutiveErrorsRef.current += 1
       if (consecutiveErrorsRef.current === 1) {
         console.warn('[usePolling] poll failed, will retry:', err)
+      }
+      // Stretch the retry interval exponentially so repeated failures don't
+      // keep hammering the server at the normal fast cadence.
+      const errorInterval = computeErrorIntervalMs(intervalMs, consecutiveErrorsRef.current)
+      if (errorInterval !== effectiveIntervalRef.current) {
+        effectiveIntervalRef.current = errorInterval
+        if (startIntervalRef.current) startIntervalRef.current()
       }
     }
   }, [intervalMs, fullCheckEveryN, scheduleResume, applyEffectiveInterval])

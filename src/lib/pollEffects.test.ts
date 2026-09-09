@@ -331,3 +331,40 @@ describe('poll effects — overdue transitions', () => {
     expect(effects.overdueNotifiedAdditions).toHaveLength(0)
   })
 })
+
+describe('poll effects — no notification for hidden-by-default items', () => {
+  it('does not fire a toast or chime for a draft PR arriving in newPRs', () => {
+    const draft = { ...makeRaw(11), draft: true }
+    const effects = computePollEffects(emptyState(), emptyResult({ newPRs: [draft] }))
+    expect(effects.notifications).toHaveLength(0)
+    expect(effects.highlightedIds).toHaveLength(0)
+  })
+
+  it('still adds the draft card to nextItems so the filter toggle works', () => {
+    const draft = { ...makeRaw(12), draft: true }
+    const effects = computePollEffects(emptyState(), emptyResult({ newPRs: [draft] }))
+    const ids = effects.nextItems.map(i => (i as { id: number }).id)
+    expect(ids).toContain(12)
+  })
+
+  it('does not fire a toast for a draft PR arriving in updatedPRs (fresh arrival path)', () => {
+    const draft = { ...makeRaw(13), draft: true }
+    const effects = computePollEffects(emptyState(), emptyResult({ updatedPRs: [draft] }))
+    expect(effects.notifications).toHaveLength(0)
+    expect(effects.highlightedIds).toHaveLength(0)
+  })
+
+  it('does not fire a toast for a PR with team_approval_required: false', () => {
+    const teamApproved = { ...makeRaw(14), team_approval_required: false }
+    const effects = computePollEffects(emptyState(), emptyResult({ newPRs: [teamApproved] }))
+    expect(effects.notifications).toHaveLength(0)
+    expect(effects.highlightedIds).toHaveLength(0)
+  })
+
+  it('does fire a toast for a non-draft PR with team_approval_required: true', () => {
+    const normal = { ...makeRaw(15), draft: false, team_approval_required: true }
+    const effects = computePollEffects(emptyState(), emptyResult({ newPRs: [normal] }))
+    expect(effects.notifications).toHaveLength(1)
+    expect(effects.highlightedIds).toEqual([15])
+  })
+})
